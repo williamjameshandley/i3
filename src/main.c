@@ -39,6 +39,8 @@ int listen_fds;
  * temporarily for drag_pointer(). */
 static struct ev_prepare *xcb_prepare;
 
+extern uint8_t previous_screen;
+
 char **start_argv;
 
 xcb_connection_t *conn;
@@ -547,6 +549,7 @@ int main(int argc, char *argv[]) {
 
     root_screen = xcb_aux_get_screen(conn, conn_screen);
     root = root_screen->root;
+    previous_screen = UINT8_MAX;
 
     /* Place requests for the atoms we need as soon as possible */
 #define xmacro(atom) \

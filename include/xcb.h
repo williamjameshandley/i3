@@ -54,6 +54,7 @@
                          XCB_EVENT_MASK_POINTER_MOTION |                                              \
                          XCB_EVENT_MASK_PROPERTY_CHANGE |                                             \
                          XCB_EVENT_MASK_FOCUS_CHANGE |                                                \
+                         XCB_EVENT_MASK_LEAVE_WINDOW |                                                \
                          XCB_EVENT_MASK_ENTER_WINDOW)
 
 #define xmacro(atom) xcb_atom_t A_##atom;
