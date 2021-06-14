@@ -101,7 +101,7 @@ void errorlog(char *fmt, ...)
 #if !defined(DLOG)
 void debuglog(char *fmt, ...)
     __attribute__((format(printf, 1, 2)));
-#define DLOG(fmt, ...) debuglog("%s:%s:%d - " fmt, STRIPPED__FILE__, __FUNCTION__, __LINE__, ##__VA_ARGS__)
+#define DLOG(fmt, ...) debuglog("%s:%s:%d - " fmt, __FILE__, __FUNCTION__, __LINE__, ##__VA_ARGS__)
 #endif
 
 /**
@@ -180,6 +180,12 @@ ssize_t writeall_nonblock(int fd, const void *buf, size_t count);
  *
  */
 ssize_t swrite(int fd, const void *buf, size_t count);
+
+/**
+ * Like strcasecmp but considers the case where either string is NULL.
+ *
+ */
+int strcasecmp_nullable(const char *a, const char *b);
 
 /**
  * Build an i3String from an UTF-8 encoded string.
@@ -341,8 +347,7 @@ gchar *g_utf8_make_valid(const gchar *str, gssize len);
  */
 uint32_t get_colorpixel(const char *hex) __attribute__((const));
 
-#if defined(__APPLE__)
-
+#ifndef HAVE_STRNDUP
 /**
  * Taken from FreeBSD
  * Returns a pointer to a new string which is a duplicate of the
@@ -350,7 +355,6 @@ uint32_t get_colorpixel(const char *hex) __attribute__((const));
  *
  */
 char *strndup(const char *str, size_t n);
-
 #endif
 
 /**
@@ -441,18 +445,13 @@ bool font_is_pango(void);
  * specified coordinates (from the top left corner of the leftmost, uppermost
  * glyph) and using the provided gc.
  *
+ * The given cairo surface must refer to the specified X drawable.
+ *
  * Text must be specified as an i3String.
  *
  */
 void draw_text(i3String *text, xcb_drawable_t drawable, xcb_gcontext_t gc,
-               xcb_visualtype_t *visual, int x, int y, int max_width);
-
-/**
- * ASCII version of draw_text to print static strings.
- *
- */
-void draw_text_ascii(const char *text, xcb_drawable_t drawable,
-                     xcb_gcontext_t gc, int x, int y, int max_width);
+               cairo_surface_t *surface, int x, int y, int max_width);
 
 /**
  * Predict the text width in pixels for the given text. Text must be
@@ -528,7 +527,7 @@ char *resolve_tilde(const char *path);
  */
 char *get_config_path(const char *override_configpath, bool use_system_paths);
 
-#if !defined(__sun)
+#ifndef HAVE_MKDIRP
 /**
  * Emulates mkdir -p (creates any missing folders)
  *
@@ -539,9 +538,9 @@ int mkdirp(const char *path, mode_t mode);
 /** Helper structure for usage in format_placeholders(). */
 typedef struct placeholder_t {
     /* The placeholder to be replaced, e.g., "%title". */
-    char *name;
+    const char *name;
     /* The value this placeholder should be replaced with. */
-    char *value;
+    const char *value;
 } placeholder_t;
 
 /**
@@ -566,8 +565,6 @@ typedef struct surface_t {
 
     /* A classic XCB graphics context. */
     xcb_gcontext_t gc;
-
-    xcb_visualtype_t *visual_type;
 
     int width;
     int height;
@@ -615,6 +612,11 @@ color_t draw_util_hex_to_color(const char *color);
 void draw_util_text(i3String *text, surface_t *surface, color_t fg_color, color_t bg_color, int x, int y, int max_width);
 
 /**
+ * Draw the given image using libi3.
+ */
+void draw_util_image(cairo_surface_t *image, surface_t *surface, int x, int y, int width, int height);
+
+/**
  * Draws a filled rectangle.
  * This function is a convenience wrapper and takes care of flushing the
  * surface as well as restoring the cairo state.
@@ -634,3 +636,46 @@ void draw_util_clear_surface(surface_t *surface, color_t color);
  */
 void draw_util_copy_surface(surface_t *src, surface_t *dest, double src_x, double src_y,
                             double dest_x, double dest_y, double width, double height);
+
+/**
+ * Puts the given socket file descriptor into non-blocking mode or dies if
+ * setting O_NONBLOCK failed. Non-blocking sockets are a good idea for our
+ * IPC model because we should by no means block the window manager.
+ *
+ */
+void set_nonblock(int sockfd);
+
+/**
+ * Creates the UNIX domain socket at the given path, sets it to non-blocking
+ * mode, bind()s and listen()s on it.
+ *
+ * The full path to the socket is stored in the char* that out_socketpath points
+ * to.
+ *
+ */
+int create_socket(const char *filename, char **out_socketpath);
+
+/**
+ * Checks if the given path exists by calling stat().
+ *
+ */
+bool path_exists(const char *path);
+
+/**
+ * Grab a screenshot of the screen's root window and set it as the wallpaper.
+ */
+void set_screenshot_as_wallpaper(xcb_connection_t *conn, xcb_screen_t *screen);
+
+/**
+ * Test whether the screen's root window has a background set.
+ *
+ * This opens & closes a window and test whether the root window still shows the
+ * content of the window.
+ */
+bool is_background_set(xcb_connection_t *conn, xcb_screen_t *screen);
+
+/**
+ * Reports whether str represents the enabled state (1, yes, true, …).
+ *
+ */
+bool boolstr(const char *str);

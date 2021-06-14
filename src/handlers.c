@@ -10,9 +10,9 @@
  */
 #include "all.h"
 
-#include <time.h>
-#include <float.h>
 #include <sys/time.h>
+#include <time.h>
+
 #include <xcb/randr.h>
 #define SN_API_NOT_YET_FROZEN 1
 #include <libsn/sn-monitor.h>
@@ -63,7 +63,7 @@ bool event_is_ignored(const int sequence, const int response_type) {
             event = SLIST_NEXT(event, ignore_events);
     }
 
-    SLIST_FOREACH(event, &ignore_events, ignore_events) {
+    SLIST_FOREACH (event, &ignore_events, ignore_events) {
         if (event->sequence != sequence)
             continue;
 
@@ -197,11 +197,12 @@ static void handle_enter_notify(xcb_enter_notify_event_t *event) {
     layout_t layout = (enter_child ? con->parent->layout : con->layout);
     if (layout == L_DEFAULT) {
         Con *child;
-        TAILQ_FOREACH(child, &(con->nodes_head), nodes)
-        if (rect_contains(child->deco_rect, event->event_x, event->event_y)) {
-            LOG("using child %p / %s instead!\n", child, child->name);
-            con = child;
-            break;
+        TAILQ_FOREACH_REVERSE (child, &(con->nodes_head), nodes_head, nodes) {
+            if (rect_contains(child->deco_rect, event->event_x, event->event_y)) {
+                LOG("using child %p / %s instead!\n", child, child->name);
+                con = child;
+                break;
+            }
         }
     }
 
@@ -256,7 +257,7 @@ static void handle_motion_notify(xcb_motion_notify_event_t *event) {
 
     /* see over which rect the user is */
     Con *current;
-    TAILQ_FOREACH(current, &(con->nodes_head), nodes) {
+    TAILQ_FOREACH_REVERSE (current, &(con->nodes_head), nodes_head, nodes) {
         if (!rect_contains(current->deco_rect, event->event_x, event->event_y))
             continue;
 
@@ -481,7 +482,7 @@ static void handle_screen_change(xcb_generic_event_t *e) {
     xcb_get_geometry_reply_t *reply = xcb_get_geometry_reply(conn, cookie, NULL);
     if (reply == NULL) {
         ELOG("Could not get geometry of the root window, exiting\n");
-        exit(1);
+        exit(EXIT_FAILURE);
     }
     DLOG("root geometry reply: (%d, %d) %d x %d\n", reply->x, reply->y, reply->width, reply->height);
 
@@ -597,12 +598,7 @@ static bool window_name_changed(i3Window *window, char *old_name) {
  * Called when a window changes its title
  *
  */
-static bool handle_windowname_change(void *data, xcb_connection_t *conn, uint8_t state,
-                                     xcb_window_t window, xcb_atom_t atom, xcb_get_property_reply_t *prop) {
-    Con *con;
-    if ((con = con_by_window_id(window)) == NULL || con->window == NULL)
-        return false;
-
+static bool handle_windowname_change(Con *con, xcb_get_property_reply_t *prop) {
     char *old_name = (con->window->name != NULL ? sstrdup(i3string_as_utf8(con->window->name)) : NULL);
 
     window_update_name(con->window, prop);
@@ -624,12 +620,7 @@ static bool handle_windowname_change(void *data, xcb_connection_t *conn, uint8_t
  * window_update_name_legacy().
  *
  */
-static bool handle_windowname_change_legacy(void *data, xcb_connection_t *conn, uint8_t state,
-                                            xcb_window_t window, xcb_atom_t atom, xcb_get_property_reply_t *prop) {
-    Con *con;
-    if ((con = con_by_window_id(window)) == NULL || con->window == NULL)
-        return false;
-
+static bool handle_windowname_change_legacy(Con *con, xcb_get_property_reply_t *prop) {
     char *old_name = (con->window->name != NULL ? sstrdup(i3string_as_utf8(con->window->name)) : NULL);
 
     window_update_name_legacy(con->window, prop);
@@ -650,12 +641,7 @@ static bool handle_windowname_change_legacy(void *data, xcb_connection_t *conn, 
  * Called when a window changes its WM_WINDOW_ROLE.
  *
  */
-static bool handle_windowrole_change(void *data, xcb_connection_t *conn, uint8_t state,
-                                     xcb_window_t window, xcb_atom_t atom, xcb_get_property_reply_t *prop) {
-    Con *con;
-    if ((con = con_by_window_id(window)) == NULL || con->window == NULL)
-        return false;
-
+static bool handle_windowrole_change(Con *con, xcb_get_property_reply_t *prop) {
     window_update_role(con->window, prop);
 
     con = remanage_window(con);
@@ -781,7 +767,7 @@ static void handle_client_message(xcb_client_message_event_t *event) {
             return;
         }
 
-        if (con_is_internal(ws) && ws != workspace_get("__i3_scratch", NULL)) {
+        if (con_is_internal(ws) && ws != workspace_get("__i3_scratch")) {
             DLOG("Workspace is internal but not scratchpad, ignoring _NET_ACTIVE_WINDOW\n");
             return;
         }
@@ -895,11 +881,13 @@ static void handle_client_message(xcb_client_message_event_t *event) {
              * let's float it and make it sticky. */
             DLOG("The window was requested to be visible on all workspaces, making it sticky and floating.\n");
 
-            floating_enable(con, false);
+            if (floating_enable(con, false)) {
+                con->floating = FLOATING_AUTO_ON;
 
-            con->sticky = true;
-            ewmh_update_sticky(con->window->id, true);
-            output_push_sticky_windows(focused);
+                con->sticky = true;
+                ewmh_update_sticky(con->window->id, true);
+                output_push_sticky_windows(focused);
+            }
         } else {
             Con *ws = ewmh_get_workspace_by_index(index);
             if (ws == NULL) {
@@ -995,12 +983,7 @@ static void handle_client_message(xcb_client_message_event_t *event) {
     }
 }
 
-static bool handle_window_type(void *data, xcb_connection_t *conn, uint8_t state, xcb_window_t window,
-                               xcb_atom_t atom, xcb_get_property_reply_t *reply) {
-    Con *con;
-    if ((con = con_by_window_id(window)) == NULL || con->window == NULL)
-        return false;
-
+static bool handle_window_type(Con *con, xcb_get_property_reply_t *reply) {
     window_update_type(con->window, reply);
     return true;
 }
@@ -1012,14 +995,7 @@ static bool handle_window_type(void *data, xcb_connection_t *conn, uint8_t state
  * See ICCCM 4.1.2.3 for more details
  *
  */
-static bool handle_normal_hints(void *data, xcb_connection_t *conn, uint8_t state, xcb_window_t window,
-                                xcb_atom_t name, xcb_get_property_reply_t *reply) {
-    Con *con = con_by_window_id(window);
-    if (con == NULL) {
-        DLOG("Received WM_NORMAL_HINTS for unknown client\n");
-        return false;
-    }
-
+static bool handle_normal_hints(Con *con, xcb_get_property_reply_t *reply) {
     bool changed = window_update_normal_hints(con->window, reply, NULL);
 
     if (changed) {
@@ -1038,21 +1014,11 @@ static bool handle_normal_hints(void *data, xcb_connection_t *conn, uint8_t stat
  * Handles the WM_HINTS property for extracting the urgency state of the window.
  *
  */
-static bool handle_hints(void *data, xcb_connection_t *conn, uint8_t state, xcb_window_t window,
-                         xcb_atom_t name, xcb_get_property_reply_t *reply) {
-    Con *con = con_by_window_id(window);
-    if (con == NULL) {
-        DLOG("Received WM_HINTS for unknown client\n");
-        return false;
-    }
-
+static bool handle_hints(Con *con, xcb_get_property_reply_t *reply) {
     bool urgency_hint;
-    if (reply == NULL)
-        reply = xcb_get_property_reply(conn, xcb_icccm_get_wm_hints(conn, window), NULL);
     window_update_hints(con->window, reply, &urgency_hint);
     con_set_urgency(con, urgency_hint);
     tree_render();
-
     return true;
 }
 
@@ -1063,24 +1029,8 @@ static bool handle_hints(void *data, xcb_connection_t *conn, uint8_t state, xcb_
  * See ICCCM 4.1.2.6 for more details
  *
  */
-static bool handle_transient_for(void *data, xcb_connection_t *conn, uint8_t state, xcb_window_t window,
-                                 xcb_atom_t name, xcb_get_property_reply_t *prop) {
-    Con *con;
-
-    if ((con = con_by_window_id(window)) == NULL || con->window == NULL) {
-        DLOG("No such window\n");
-        return false;
-    }
-
-    if (prop == NULL) {
-        prop = xcb_get_property_reply(conn, xcb_get_property_unchecked(conn, false, window, XCB_ATOM_WM_TRANSIENT_FOR, XCB_ATOM_WINDOW, 0, 32),
-                                      NULL);
-        if (prop == NULL)
-            return false;
-    }
-
+static bool handle_transient_for(Con *con, xcb_get_property_reply_t *prop) {
     window_update_transient_for(con->window, prop);
-
     return true;
 }
 
@@ -1089,21 +1039,8 @@ static bool handle_transient_for(void *data, xcb_connection_t *conn, uint8_t sta
  * toolwindow (or similar) and to which window it belongs (logical parent).
  *
  */
-static bool handle_clientleader_change(void *data, xcb_connection_t *conn, uint8_t state, xcb_window_t window,
-                                       xcb_atom_t name, xcb_get_property_reply_t *prop) {
-    Con *con;
-    if ((con = con_by_window_id(window)) == NULL || con->window == NULL)
-        return false;
-
-    if (prop == NULL) {
-        prop = xcb_get_property_reply(conn, xcb_get_property_unchecked(conn, false, window, A_WM_CLIENT_LEADER, XCB_ATOM_WINDOW, 0, 32),
-                                      NULL);
-        if (prop == NULL)
-            return false;
-    }
-
+static bool handle_clientleader_change(Con *con, xcb_get_property_reply_t *prop) {
     window_update_leader(con->window, prop);
-
     return true;
 }
 
@@ -1183,24 +1120,19 @@ static void handle_configure_notify(xcb_configure_notify_event_t *event) {
  * Handles the WM_CLASS property for assignments and criteria selection.
  *
  */
-static bool handle_class_change(void *data, xcb_connection_t *conn, uint8_t state, xcb_window_t window,
-                                xcb_atom_t name, xcb_get_property_reply_t *prop) {
-    Con *con;
-    if ((con = con_by_window_id(window)) == NULL || con->window == NULL)
-        return false;
-
-    if (prop == NULL) {
-        prop = xcb_get_property_reply(conn, xcb_get_property_unchecked(conn, false, window, XCB_ATOM_WM_CLASS, XCB_ATOM_STRING, 0, 32),
-                                      NULL);
-
-        if (prop == NULL)
-            return false;
-    }
-
+static bool handle_class_change(Con *con, xcb_get_property_reply_t *prop) {
     window_update_class(con->window, prop);
-
     con = remanage_window(con);
+    return true;
+}
 
+/*
+ * Handles the WM_CLIENT_MACHINE property for assignments and criteria selection.
+ *
+ */
+static bool handle_machine_change(Con *con, xcb_get_property_reply_t *prop) {
+    window_update_machine(con->window, prop);
+    con = remanage_window(con);
     return true;
 }
 
@@ -1208,20 +1140,7 @@ static bool handle_class_change(void *data, xcb_connection_t *conn, uint8_t stat
  * Handles the _MOTIF_WM_HINTS property of specifing window deocration settings.
  *
  */
-static bool handle_motif_hints_change(void *data, xcb_connection_t *conn, uint8_t state, xcb_window_t window,
-                                      xcb_atom_t name, xcb_get_property_reply_t *prop) {
-    Con *con;
-    if ((con = con_by_window_id(window)) == NULL || con->window == NULL)
-        return false;
-
-    if (prop == NULL) {
-        prop = xcb_get_property_reply(conn, xcb_get_property_unchecked(conn, false, window, A__MOTIF_WM_HINTS, XCB_GET_PROPERTY_TYPE_ANY, 0, 5 * sizeof(uint64_t)),
-                                      NULL);
-
-        if (prop == NULL)
-            return false;
-    }
-
+static bool handle_motif_hints_change(Con *con, xcb_get_property_reply_t *prop) {
     border_style_t motif_border_style;
     window_update_motif_hints(con->window, prop, &motif_border_style);
 
@@ -1239,34 +1158,7 @@ static bool handle_motif_hints_change(void *data, xcb_connection_t *conn, uint8_
  * Handles the _NET_WM_STRUT_PARTIAL property for allocating space for dock clients.
  *
  */
-static bool handle_strut_partial_change(void *data, xcb_connection_t *conn, uint8_t state, xcb_window_t window,
-                                        xcb_atom_t name, xcb_get_property_reply_t *prop) {
-    DLOG("strut partial change for window 0x%08x\n", window);
-
-    Con *con;
-    if ((con = con_by_window_id(window)) == NULL || con->window == NULL) {
-        return false;
-    }
-
-    if (prop == NULL) {
-        xcb_generic_error_t *err = NULL;
-        xcb_get_property_cookie_t strut_cookie = xcb_get_property(conn, false, window, A__NET_WM_STRUT_PARTIAL,
-                                                                  XCB_GET_PROPERTY_TYPE_ANY, 0, UINT32_MAX);
-        prop = xcb_get_property_reply(conn, strut_cookie, &err);
-
-        if (err != NULL) {
-            DLOG("got error when getting strut partial property: %d\n", err->error_code);
-            free(err);
-            return false;
-        }
-
-        if (prop == NULL) {
-            return false;
-        }
-    }
-
-    DLOG("That is con %p / %s\n", con, con->name);
-
+static bool handle_strut_partial_change(Con *con, xcb_get_property_reply_t *prop) {
     window_update_strut_partial(con->window, prop);
 
     /* we only handle this change for dock clients */
@@ -1307,18 +1199,43 @@ static bool handle_strut_partial_change(void *data, xcb_connection_t *conn, uint
 
     /* attach the dock to the dock area */
     con_detach(con);
-    con->parent = dockarea;
-    TAILQ_INSERT_HEAD(&(dockarea->focus_head), con, focused);
-    TAILQ_INSERT_HEAD(&(dockarea->nodes_head), con, nodes);
+    con_attach(con, dockarea, true);
 
     tree_render();
 
     return true;
 }
 
+/*
+ * Handles the _I3_FLOATING_WINDOW property to properly run assignments for
+ * floating window changes.
+ *
+ * This is needed to correctly run the assignments after changes in floating
+ * windows which are triggered by user commands (floating enable | disable). In
+ * that case, we can't call run_assignments because it will modify the parser
+ * state when it needs to parse the user-specified action, breaking the parser
+ * state for the original command.
+ *
+ */
+static bool handle_i3_floating(Con *con, xcb_get_property_reply_t *prop) {
+    DLOG("floating change for con %p\n", con);
+
+    remanage_window(con);
+
+    return true;
+}
+
+static bool handle_windowicon_change(Con *con, xcb_get_property_reply_t *prop) {
+    window_update_icon(con->window, prop);
+
+    x_push_changes(croot);
+
+    return true;
+}
+
 /* Returns false if the event could not be processed (e.g. the window could not
  * be found), true otherwise */
-typedef bool (*cb_property_handler_t)(void *data, xcb_connection_t *c, uint8_t state, xcb_window_t window, xcb_atom_t atom, xcb_get_property_reply_t *property);
+typedef bool (*cb_property_handler_t)(Con *con, xcb_get_property_reply_t *property);
 
 struct property_handler_t {
     xcb_atom_t atom;
@@ -1337,7 +1254,10 @@ static struct property_handler_t property_handlers[] = {
     {0, 128, handle_class_change},
     {0, UINT_MAX, handle_strut_partial_change},
     {0, UINT_MAX, handle_window_type},
-    {0, 5 * sizeof(uint64_t), handle_motif_hints_change}};
+    {0, UINT_MAX, handle_i3_floating},
+    {0, 128, handle_machine_change},
+    {0, 5 * sizeof(uint64_t), handle_motif_hints_change},
+    {0, UINT_MAX, handle_windowicon_change}};
 #define NUM_HANDLERS (sizeof(property_handlers) / sizeof(struct property_handler_t))
 
 /*
@@ -1358,12 +1278,17 @@ void property_handlers_init(void) {
     property_handlers[7].atom = XCB_ATOM_WM_CLASS;
     property_handlers[8].atom = A__NET_WM_STRUT_PARTIAL;
     property_handlers[9].atom = A__NET_WM_WINDOW_TYPE;
-    property_handlers[10].atom = A__MOTIF_WM_HINTS;
+    property_handlers[10].atom = A_I3_FLOATING_WINDOW;
+    property_handlers[11].atom = XCB_ATOM_WM_CLIENT_MACHINE;
+    property_handlers[12].atom = A__MOTIF_WM_HINTS;
+    property_handlers[13].atom = A__NET_WM_ICON;
 }
 
 static void property_notify(uint8_t state, xcb_window_t window, xcb_atom_t atom) {
     struct property_handler_t *handler = NULL;
     xcb_get_property_reply_t *propr = NULL;
+    xcb_generic_error_t *err = NULL;
+    Con *con;
 
     for (size_t c = 0; c < NUM_HANDLERS; c++) {
         if (property_handlers[c].atom != atom)
@@ -1378,13 +1303,23 @@ static void property_notify(uint8_t state, xcb_window_t window, xcb_atom_t atom)
         return;
     }
 
+    if ((con = con_by_window_id(window)) == NULL || con->window == NULL) {
+        DLOG("Received property for atom %d for unknown client\n", atom);
+        return;
+    }
+
     if (state != XCB_PROPERTY_DELETE) {
         xcb_get_property_cookie_t cookie = xcb_get_property(conn, 0, window, atom, XCB_GET_PROPERTY_TYPE_ANY, 0, handler->long_len);
-        propr = xcb_get_property_reply(conn, cookie, 0);
+        propr = xcb_get_property_reply(conn, cookie, &err);
+        if (err != NULL) {
+            DLOG("got error %d when getting property of atom %d\n", err->error_code, atom);
+            FREE(err);
+            return;
+        }
     }
 
     /* the handler will free() the reply unless it returns false */
-    if (!handler->cb(NULL, conn, state, window, atom, propr))
+    if (!handler->cb(con, propr))
         FREE(propr);
 }
 

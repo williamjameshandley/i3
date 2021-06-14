@@ -40,6 +40,7 @@ state INITIAL:
   'scratchpad' -> SCRATCHPAD
   'swap' -> SWAP
   'title_format' -> TITLE_FORMAT
+  'title_window_icon' -> TITLE_WINDOW_ICON
   'mode' -> MODE
   'bar' -> BAR
 
@@ -54,6 +55,7 @@ state CRITERIA:
   ctype = 'title'       -> CRITERION
   ctype = 'urgent'      -> CRITERION
   ctype = 'workspace'   -> CRITERION
+  ctype = 'machine'     -> CRITERION
   ctype = 'tiling', 'floating'
       -> call cmd_criteria_add($ctype, NULL); CRITERIA
   ']' -> call cmd_criteria_match_windows(); INITIAL
@@ -131,7 +133,7 @@ state WORKSPACE:
       -> call cmd_workspace_back_and_forth()
   'number'
       -> WORKSPACE_NUMBER
-  workspace = string 
+  workspace = string
       -> call cmd_workspace_name($workspace, $no_auto_back_and_forth)
 
 state WORKSPACE_NUMBER:
@@ -321,14 +323,15 @@ state RENAME_WORKSPACE_TO_NEW_NAME:
   new_name = string
       -> call cmd_rename_workspace($old_name, $new_name)
 
-# move <direction> [<pixels> [px]]
+
+# move <direction> [<amount> [px|ppt]]
 # move [window|container] [to] workspace [<str>|next|prev|next_on_output|prev_on_output|current]
 # move [window|container] [to] output <str>
 # move [window|container] [to] mark <str>
 # move [window|container] [to] scratchpad
 # move workspace to [output] <str>
 # move scratchpad
-# move [window|container] [to] [absolute] position [ [<pixels> [px] <pixels> [px]] | center ]
+# move [window|container] [to] [absolute] position [ [<pos_x> [px|ppt] <pos_y> [px|ppt] ] | center ]
 # move [window|container] [to] position mouse|cursor|pointer
 state MOVE:
   'window'
@@ -355,16 +358,16 @@ state MOVE:
       -> MOVE_TO_ABSOLUTE_POSITION
 
 state MOVE_DIRECTION:
-  pixels = number
-      -> MOVE_DIRECTION_PX
+  amount = number
+      -> MOVE_DIRECTION_NUMBER
   end
-      -> call cmd_move_direction($direction, 10)
+      -> call cmd_move_direction($direction, 10, "px")
 
-state MOVE_DIRECTION_PX:
-  'px'
-      -> call cmd_move_direction($direction, &pixels)
+state MOVE_DIRECTION_NUMBER:
+  mode = 'px', 'ppt'
+      -> call cmd_move_direction($direction, &amount, $mode)
   end
-      -> call cmd_move_direction($direction, &pixels)
+      -> call cmd_move_direction($direction, &amount, "px")
 
 state MOVE_WORKSPACE:
   'to '
@@ -383,8 +386,10 @@ state MOVE_WORKSPACE_NUMBER:
       -> call cmd_move_con_to_workspace_number($number, $no_auto_back_and_forth)
 
 state MOVE_TO_OUTPUT:
-  output = string
-      -> call cmd_move_con_to_output($output)
+  output = word
+      -> call cmd_move_con_to_output($output, 0); MOVE_TO_OUTPUT
+  end
+      -> call cmd_move_con_to_output(NULL, 0); INITIAL
 
 state MOVE_TO_MARK:
   mark = string
@@ -392,9 +397,13 @@ state MOVE_TO_MARK:
 
 state MOVE_WORKSPACE_TO_OUTPUT:
   'output'
-      ->
-  output = string
-      -> call cmd_move_workspace_to_output($output)
+      -> MOVE_WORKSPACE_TO_OUTPUT_WORD
+
+state MOVE_WORKSPACE_TO_OUTPUT_WORD:
+  output = word
+      -> call cmd_move_con_to_output($output, 1); MOVE_WORKSPACE_TO_OUTPUT_WORD
+  end
+      -> call cmd_move_con_to_output(NULL, 1); INITIAL
 
 state MOVE_TO_ABSOLUTE_POSITION:
   'position'
@@ -409,14 +418,16 @@ state MOVE_TO_POSITION:
       -> MOVE_TO_POSITION_X
 
 state MOVE_TO_POSITION_X:
-  'px'
+  mode_x = 'px', 'ppt'
       ->
   coord_y = number
       -> MOVE_TO_POSITION_Y
 
 state MOVE_TO_POSITION_Y:
-  'px', end
-      -> call cmd_move_window_to_position(&coord_x, &coord_y)
+  mode_y = 'px', 'ppt'
+      -> call cmd_move_window_to_position(&coord_x, $mode_x, &coord_y, $mode_y)
+  end
+      -> call cmd_move_window_to_position(&coord_x, $mode_x, &coord_y, 0)
 
 # mode <string>
 state MODE:
@@ -452,23 +463,43 @@ state TITLE_FORMAT:
   format = string
       -> call cmd_title_format($format)
 
+state TITLE_WINDOW_ICON:
+  'padding'
+    -> TITLE_WINDOW_ICON_PADDING
+  enable = '1', 'yes', 'true', 'on', 'enable', 'active', '0', 'no', 'false', 'off', 'disable', 'inactive'
+    -> call cmd_title_window_icon($enable, 0)
+
+state TITLE_WINDOW_ICON_PADDING:
+  end
+    -> call cmd_title_window_icon($enable, &padding)
+  'px'
+    -> call cmd_title_window_icon($enable, &padding)
+  padding = number
+    ->
+
 # bar (hidden_state hide|show|toggle)|(mode dock|hide|invisible|toggle) [<bar_id>]
 state BAR:
-  bar_type = 'hidden_state'
+  'hidden_state'
       -> BAR_HIDDEN_STATE
-  bar_type = 'mode'
+  'mode'
       -> BAR_MODE
 
 state BAR_HIDDEN_STATE:
   bar_value = 'hide', 'show', 'toggle'
-      -> BAR_W_ID
+      -> BAR_HIDDEN_STATE_ID
 
-state BAR_MODE:
-  bar_value = 'dock', 'hide', 'invisible', 'toggle'
-      -> BAR_W_ID
-
-state BAR_W_ID:
+state BAR_HIDDEN_STATE_ID:
   bar_id = word
       ->
   end
-      -> call cmd_bar($bar_type, $bar_value, $bar_id)
+      -> call cmd_bar_hidden_state($bar_value, $bar_id)
+
+state BAR_MODE:
+  bar_value = 'dock', 'hide', 'invisible', 'toggle'
+      -> BAR_MODE_ID
+
+state BAR_MODE_ID:
+  bar_id = word
+      ->
+  end
+      -> call cmd_bar_mode($bar_value, $bar_id)

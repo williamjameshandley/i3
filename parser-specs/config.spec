@@ -20,6 +20,7 @@ state INITIAL:
   'set '                                   -> IGNORE_LINE
   'set	'                                  -> IGNORE_LINE
   'set_from_resource'                      -> IGNORE_LINE
+  'include'                                -> INCLUDE
   bindtype = 'bindsym', 'bindcode', 'bind' -> BINDING
   'bar'                                    -> BARBRACE
   'font'                                   -> FONT
@@ -62,6 +63,11 @@ state INITIAL:
 state IGNORE_LINE:
   line
       -> INITIAL
+
+# include <pattern>
+state INCLUDE:
+  pattern = string
+      -> call cfg_include($pattern)
 
 # floating_minimum_size <width> x <height>
 state FLOATING_MINIMUM_SIZE_WIDTH:
@@ -181,16 +187,19 @@ state NO_FOCUS_END:
 
 # Criteria: Used by for_window and assign.
 state CRITERIA:
-  ctype = 'class'       -> CRITERION
-  ctype = 'instance'    -> CRITERION
-  ctype = 'window_role' -> CRITERION
-  ctype = 'con_id'      -> CRITERION
-  ctype = 'id'          -> CRITERION
-  ctype = 'window_type' -> CRITERION
-  ctype = 'con_mark'    -> CRITERION
-  ctype = 'title'       -> CRITERION
-  ctype = 'urgent'      -> CRITERION
-  ctype = 'workspace'   -> CRITERION
+  ctype = 'class'         -> CRITERION
+  ctype = 'instance'      -> CRITERION
+  ctype = 'window_role'   -> CRITERION
+  ctype = 'con_id'        -> CRITERION
+  ctype = 'id'            -> CRITERION
+  ctype = 'window_type'   -> CRITERION
+  ctype = 'con_mark'      -> CRITERION
+  ctype = 'title'         -> CRITERION
+  ctype = 'urgent'        -> CRITERION
+  ctype = 'workspace'     -> CRITERION
+  ctype = 'machine'     -> CRITERION
+  ctype = 'floating_from' -> CRITERION_FROM
+  ctype = 'tiling_from'   -> CRITERION_FROM
   ctype = 'tiling', 'floating'
       -> call cfg_criteria_add($ctype, NULL); CRITERIA
   ']'
@@ -198,6 +207,22 @@ state CRITERIA:
 
 state CRITERION:
   '=' -> CRITERION_STR
+
+state CRITERION_FROM:
+  '=' -> CRITERION_FROM_STR_START
+
+state CRITERION_FROM_STR_START:
+  '"' -> CRITERION_FROM_STR
+  kind = 'auto', 'user'
+    -> call cfg_criteria_add($ctype, $kind); CRITERIA
+
+state CRITERION_FROM_STR:
+  kind = 'auto', 'user'
+    -> CRITERION_FROM_STR_END
+
+state CRITERION_FROM_STR_END:
+  '"'
+    -> call cfg_criteria_add($ctype, $kind); CRITERIA
 
 state CRITERION_STR:
   cvalue = word
@@ -374,6 +399,8 @@ state BINDCOMMAND:
   exclude_titlebar = '--exclude-titlebar'
       ->
   command = string
+      -> call cfg_binding($bindtype, $modifiers, $key, $release, $border, $whole_window, $exclude_titlebar, $command)
+  end
       -> call cfg_binding($bindtype, $modifiers, $key, $release, $border, $whole_window, $exclude_titlebar, $command)
 
 ################################################################################

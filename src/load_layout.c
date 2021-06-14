@@ -10,10 +10,9 @@
  */
 #include "all.h"
 
-#include <yajl/yajl_common.h>
-#include <yajl/yajl_gen.h>
+#include <locale.h>
+
 #include <yajl/yajl_parse.h>
-#include <yajl/yajl_version.h>
 
 /* TODO: refactor the whole parsing thing */
 
@@ -45,9 +44,7 @@ struct pending_marks {
  * array. */
 struct focus_mapping {
     int old_id;
-
-    TAILQ_ENTRY(focus_mapping)
-    focus_mappings;
+    TAILQ_ENTRY(focus_mapping) focus_mappings;
 };
 
 static TAILQ_HEAD(focus_mappings_head, focus_mapping) focus_mappings =
@@ -144,7 +141,7 @@ static int json_end_map(void *ctx) {
             if (rect_equals(json_node->rect, (Rect){0, 0, 0, 0})) {
                 DLOG("Geometry not set, combining children\n");
                 Con *child;
-                TAILQ_FOREACH(child, &(json_node->nodes_head), nodes) {
+                TAILQ_FOREACH (child, &(json_node->nodes_head), nodes) {
                     DLOG("child geometry: %d x %d\n", child->geometry.width, child->geometry.height);
                     json_node->rect.width += child->geometry.width;
                     json_node->rect.height = max(json_node->rect.height, child->geometry.height);
@@ -170,6 +167,19 @@ static int json_end_map(void *ctx) {
         con_attach(json_node, json_node->parent, true);
         LOG("Creating window\n");
         x_con_init(json_node);
+
+        /* Fix erroneous JSON input regarding floating containers to avoid
+         * crashing, see #3901. */
+        const int old_floating_mode = json_node->floating;
+        if (old_floating_mode >= FLOATING_AUTO_ON && json_node->parent->type != CT_FLOATING_CON) {
+            LOG("Fixing floating node without CT_FLOATING_CON parent\n");
+
+            /* Force floating_enable to work */
+            json_node->floating = FLOATING_AUTO_OFF;
+            floating_enable(json_node, false);
+            json_node->floating = old_floating_mode;
+        }
+
         json_node = json_node->parent;
         incomplete--;
         DLOG("incomplete = %d\n", incomplete);
@@ -204,10 +214,10 @@ static int json_end_array(void *ctx) {
     if (parsing_focus) {
         /* Clear the list of focus mappings */
         struct focus_mapping *mapping;
-        TAILQ_FOREACH_REVERSE(mapping, &focus_mappings, focus_mappings_head, focus_mappings) {
+        TAILQ_FOREACH_REVERSE (mapping, &focus_mappings, focus_mappings_head, focus_mappings) {
             LOG("focus (reverse) %d\n", mapping->old_id);
             Con *con;
-            TAILQ_FOREACH(con, &(json_node->focus_head), focused) {
+            TAILQ_FOREACH (con, &(json_node->focus_head), focused) {
                 if (con->old_id != mapping->old_id)
                     continue;
                 LOG("got it! %p\n", con);
@@ -274,6 +284,9 @@ static int json_string(void *ctx, const unsigned char *val, size_t len) {
             swallow_is_empty = false;
         } else if (strcasecmp(last_key, "title") == 0) {
             current_swallow->title = regex_new(sval);
+            swallow_is_empty = false;
+        } else if (strcasecmp(last_key, "machine") == 0) {
+            current_swallow->machine = regex_new(sval);
             swallow_is_empty = false;
         } else {
             ELOG("swallow key %s unknown\n", last_key);
@@ -441,6 +454,10 @@ static int json_int(void *ctx, long long val) {
 
     if (strcasecmp(last_key, "current_border_width") == 0)
         json_node->current_border_width = val;
+
+    if (strcasecmp(last_key, "window_icon_padding") == 0) {
+        json_node->window_icon_padding = val;
+    }
 
     if (strcasecmp(last_key, "depth") == 0)
         json_node->depth = val;

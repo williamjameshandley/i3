@@ -10,9 +10,7 @@
 #pragma once
 
 #include <config.h>
-
-#include <stdarg.h>
-#include <stdbool.h>
+#include <ev.h>
 
 /* We will include libi3.h which define its own version of LOG, ELOG.
  * We want *our* version, so we undef the libi3 one. */
@@ -29,11 +27,12 @@
    is, delete the preceding comma */
 #define LOG(fmt, ...) verboselog(fmt, ##__VA_ARGS__)
 #define ELOG(fmt, ...) errorlog("ERROR: " fmt, ##__VA_ARGS__)
-#define DLOG(fmt, ...) debuglog("%s:%s:%d - " fmt, STRIPPED__FILE__, __FUNCTION__, __LINE__, ##__VA_ARGS__)
+#define DLOG(fmt, ...) debuglog("%s:%s:%d - " fmt, __FILE__, __FUNCTION__, __LINE__, ##__VA_ARGS__)
 
 extern char *errorfilename;
 extern char *shmlogname;
 extern int shmlog_size;
+extern char *current_log_stream_socket_path;
 
 /**
  * Initializes logging by creating an error logfile in /tmp (or
@@ -103,3 +102,5 @@ void verboselog(char *fmt, ...)
  * failures. This function is invoked automatically when exiting.
  */
 void purge_zerobyte_logfile(void);
+
+void log_new_client(EV_P_ struct ev_io *w, int revents);

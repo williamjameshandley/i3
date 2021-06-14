@@ -9,10 +9,6 @@
  */
 #include "all.h"
 
-#include "yajl_utils.h"
-
-#include <yajl/yajl_gen.h>
-
 /*
  * Match frame and window depth. This is needed because X will refuse to reparent a
  * window whose background is ParentRelative under a window with a different depth.
@@ -29,7 +25,7 @@ static xcb_window_t _match_depth(i3Window *win, Con *con) {
 }
 
 /*
- * Remove all match criteria, the first swallowed window wins. 
+ * Remove all match criteria, the first swallowed window wins.
  *
  */
 static void _remove_matches(Con *con) {
@@ -83,15 +79,16 @@ void restore_geometry(void) {
     DLOG("Restoring geometry\n");
 
     Con *con;
-    TAILQ_FOREACH(con, &all_cons, all_cons)
-    if (con->window) {
-        DLOG("Re-adding X11 border of %d px\n", con->border_width);
-        con->window_rect.width += (2 * con->border_width);
-        con->window_rect.height += (2 * con->border_width);
-        xcb_set_window_rect(conn, con->window->id, con->window_rect);
-        DLOG("placing window %08x at %d %d\n", con->window->id, con->rect.x, con->rect.y);
-        xcb_reparent_window(conn, con->window->id, root,
-                            con->rect.x, con->rect.y);
+    TAILQ_FOREACH (con, &all_cons, all_cons) {
+        if (con->window) {
+            DLOG("Re-adding X11 border of %d px\n", con->border_width);
+            con->window_rect.width += (2 * con->border_width);
+            con->window_rect.height += (2 * con->border_width);
+            xcb_set_window_rect(conn, con->window->id, con->window_rect);
+            DLOG("placing window %08x at %d %d\n", con->window->id, con->rect.x, con->rect.y);
+            xcb_reparent_window(conn, con->window->id, root,
+                                con->rect.x, con->rect.y);
+        }
     }
 
     /* Strictly speaking, this line doesn’t really belong here, but since we
@@ -119,7 +116,10 @@ void manage_window(xcb_window_t window, xcb_get_window_attributes_cookie_t cooki
         utf8_title_cookie, title_cookie,
         class_cookie, leader_cookie, transient_cookie,
         role_cookie, startup_id_cookie, wm_hints_cookie,
-        wm_normal_hints_cookie, motif_wm_hints_cookie, wm_user_time_cookie, wm_desktop_cookie;
+        wm_normal_hints_cookie, motif_wm_hints_cookie, wm_user_time_cookie, wm_desktop_cookie,
+        wm_machine_cookie;
+
+    xcb_get_property_cookie_t wm_icon_cookie;
 
     geomc = xcb_get_geometry(conn, d);
 
@@ -192,6 +192,8 @@ void manage_window(xcb_window_t window, xcb_get_window_attributes_cookie_t cooki
     motif_wm_hints_cookie = GET_PROPERTY(A__MOTIF_WM_HINTS, 5 * sizeof(uint64_t));
     wm_user_time_cookie = GET_PROPERTY(A__NET_WM_USER_TIME, UINT32_MAX);
     wm_desktop_cookie = GET_PROPERTY(A__NET_WM_DESKTOP, UINT32_MAX);
+    wm_machine_cookie = GET_PROPERTY(XCB_ATOM_WM_CLIENT_MACHINE, UINT32_MAX);
+    wm_icon_cookie = GET_PROPERTY(A__NET_WM_ICON, UINT32_MAX);
 
     i3Window *cwindow = scalloc(1, sizeof(i3Window));
     cwindow->id = window;
@@ -205,6 +207,7 @@ void manage_window(xcb_window_t window, xcb_get_window_attributes_cookie_t cooki
     window_update_class(cwindow, xcb_get_property_reply(conn, class_cookie, NULL));
     window_update_name_legacy(cwindow, xcb_get_property_reply(conn, title_cookie, NULL));
     window_update_name(cwindow, xcb_get_property_reply(conn, utf8_title_cookie, NULL));
+    window_update_icon(cwindow, xcb_get_property_reply(conn, wm_icon_cookie, NULL));
     window_update_leader(cwindow, xcb_get_property_reply(conn, leader_cookie, NULL));
     window_update_transient_for(cwindow, xcb_get_property_reply(conn, transient_cookie, NULL));
     window_update_strut_partial(cwindow, xcb_get_property_reply(conn, strut_cookie, NULL));
@@ -214,6 +217,7 @@ void manage_window(xcb_window_t window, xcb_get_window_attributes_cookie_t cooki
     border_style_t motif_border_style = BS_NORMAL;
     window_update_motif_hints(cwindow, xcb_get_property_reply(conn, motif_wm_hints_cookie, NULL), &motif_border_style);
     window_update_normal_hints(cwindow, xcb_get_property_reply(conn, wm_normal_hints_cookie, NULL), geom);
+    window_update_machine(cwindow, xcb_get_property_reply(conn, wm_machine_cookie, NULL));
     xcb_get_property_reply_t *type_reply = xcb_get_property_reply(conn, wm_type_cookie, NULL);
     xcb_get_property_reply_t *state_reply = xcb_get_property_reply(conn, state_cookie, NULL);
 
@@ -273,6 +277,7 @@ void manage_window(xcb_window_t window, xcb_get_window_attributes_cookie_t cooki
     DLOG("Initial geometry: (%d, %d, %d, %d)\n", geom->x, geom->y, geom->width, geom->height);
 
     /* See if any container swallows this new window */
+    cwindow->swallowed = false;
     Match *match = NULL;
     Con *nc = con_for_window(search_at, cwindow, &match);
     const bool match_from_restart_mode = (match && match->restart_mode);
@@ -294,7 +299,7 @@ void manage_window(xcb_window_t window, xcb_get_window_attributes_cookie_t cooki
             /* A_TO_WORKSPACE type assignment or fallback from A_TO_WORKSPACE_NUMBER
              * when the target workspace number does not exist yet. */
             if (!assigned_ws) {
-                assigned_ws = workspace_get(assignment->dest.workspace, NULL);
+                assigned_ws = workspace_get(assignment->dest.workspace);
             }
 
             nc = con_descend_tiling_focused(assigned_ws);
@@ -325,7 +330,7 @@ void manage_window(xcb_window_t window, xcb_get_window_attributes_cookie_t cooki
         } else if (startup_ws) {
             /* If it was started on a specific workspace, we want to open it there. */
             DLOG("Using workspace on which this application was started (%s)\n", startup_ws);
-            nc = con_descend_tiling_focused(workspace_get(startup_ws, NULL));
+            nc = con_descend_tiling_focused(workspace_get(startup_ws));
             DLOG("focused on ws %s: %p / %s\n", startup_ws, nc, nc->name);
             if (nc->type == CT_WORKSPACE)
                 nc = tree_open_con(nc, cwindow);
@@ -361,6 +366,8 @@ void manage_window(xcb_window_t window, xcb_get_window_attributes_cookie_t cooki
             match_free(match);
             FREE(match);
         }
+
+        cwindow->swallowed = true;
     }
 
     DLOG("new container = %p\n", nc);
@@ -536,7 +543,9 @@ void manage_window(xcb_window_t window, xcb_get_window_attributes_cookie_t cooki
          * was not specified */
         bool automatic_border = (motif_border_style == BS_NORMAL);
 
-        floating_enable(nc, automatic_border);
+        if (floating_enable(nc, automatic_border)) {
+            nc->floating = FLOATING_AUTO_ON;
+        }
     }
 
     /* explicitly set the border width to the default */
@@ -696,6 +705,11 @@ out:
  *
  */
 Con *remanage_window(Con *con) {
+    /* Make sure this windows hasn't already been swallowed. */
+    if (con->window->swallowed) {
+        run_assignments(con->window);
+        return con;
+    }
     Match *match;
     Con *nc = con_for_window(croot, con->window, &match);
     if (nc == NULL || nc->window == NULL || nc->window == con->window) {
@@ -741,5 +755,6 @@ Con *remanage_window(Con *con) {
         ewmh_update_wm_desktop();
     }
 
+    nc->window->swallowed = true;
     return nc;
 }

@@ -7,7 +7,7 @@ use Test::Builder;
 use X11::XCB::Rect;
 use X11::XCB::Window;
 use X11::XCB qw(:all);
-use lib qw(@abs_top_srcdir@/AnyEvent-I3/blib/lib);
+use lib qw(@abs_top_builddir@/AnyEvent-I3/blib/lib);
 use AnyEvent::I3;
 use List::Util qw(first);
 use Time::HiRes qw(sleep);
@@ -410,7 +410,7 @@ Returns the name of the output on which this workspace resides
 
   cmd 'focus output fake-1';
   cmd 'workspace 1';
-  is(get_output_for_workspace('1', 'fake-0', 'Workspace 1 in output fake-0');
+  is(get_output_for_workspace('1'), 'fake-0', 'Workspace 1 in output fake-0');
 
 =cut
 sub get_output_for_workspace {
@@ -419,10 +419,12 @@ sub get_output_for_workspace {
     my $tree = $i3->get_tree->recv;
     my @outputs = @{$tree->{nodes}};
 
-    foreach (grep { not $_->{name} =~ /^__/ } @outputs) {
-        my $output = $_->{name};
-        foreach (grep { $_->{name} =~ "content" } @{$_->{nodes}}) {
-            return $output if $_->{nodes}[0]->{name} =~ $ws_name;
+    for my $output (@outputs) {
+        next if $output->{name} eq '__i3';
+        # get the first CT_CON of each output
+        my $content = first { $_->{type} eq 'con' } @{$output->{nodes}};
+        if (grep {$_->{name} eq $ws_name} @{$content->{nodes}}){
+            return $output->{name};
         }
     }
 }

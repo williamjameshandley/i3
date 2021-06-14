@@ -53,12 +53,23 @@ existing window (rotated displays).
 
 image:two_terminals.png[Two terminals]
 
-To move the focus between the two terminals, you can use the direction keys
-which you may know from the editor +vi+. However, in i3, your homerow is used
-for these keys (in +vi+, the keys are shifted to the left by one for
-compatibility with most keyboard layouts). Therefore, +$mod+j+ is left, +$mod+k+
-is down, +$mod+l+ is up and `$mod+;` is right. So, to switch between the
-terminals, use +$mod+k+ or +$mod+l+. Of course, you can also use the arrow keys.
+To move the focus between the two terminals, you can use the arrow keys. For
+convenience, the arrows are also available directly on the
+https://en.wikipedia.org/wiki/Touch_typing[keyboard’s home row] underneath your
+right hand:
+
+|===
+| `$mod+j` | left
+| `$mod+k` | down
+| `$mod+l` | up
+| `$mod+;` | right
+|===
+
+Note that this differs by one key from the popular text editor `vi`, which was
+https://twitter.com/hillelogram/status/1326600125569961991[developed on an
+ADM-3A terminal and therefore uses `hjkl` instead of `jkl;`] -- i3’s default is
+meant to require minimal finger movement, but some `vi` users change their i3
+config for consistency.
 
 At the moment, your workspace is split (it contains two terminals) in a
 specific direction (horizontal by default). Every window can be split
@@ -67,7 +78,7 @@ horizontally or vertically again, just like the workspace. The terminology is
 or browser) and "split container" for containers that consist of one or more
 windows.
 
-TODO: picture of the tree
+//TODO: picture of the tree
 
 To split a window vertically, press +$mod+v+ before you create the new window.
 To split it horizontally, press +$mod+h+.
@@ -245,7 +256,7 @@ you open a new terminal, it will open below the current one.
 
 So, how can you open a new terminal window to the *right* of the current one?
 The solution is to use +focus parent+, which will focus the +Parent Container+ of
-the current +Container+. In default configuration, use +$mod+a+ to navigate one 
+the current +Container+. In default configuration, use +$mod+a+ to navigate one
 +Container+ up the tree (you can repeat this multiple times until you get to the
 +Workspace Container+). In this case, you would focus the +Vertical Split Container+
 which is *inside* the horizontally oriented workspace. Thus, now new windows will be
@@ -263,7 +274,7 @@ single workspace on which you open three terminal windows. All these terminal
 windows are directly attached to one node inside i3’s layout tree, the
 workspace node. By default, the workspace node’s orientation is +horizontal+.
 
-Now you move one of these terminals down (+$mod+Shift+k+ by default). The
+Now you move one of these terminals down (+$mod+Shift+j+ by default). The
 workspace node’s orientation will be changed to +vertical+. The terminal window
 you moved down is directly attached to the workspace and appears on the bottom
 of the screen. A new (horizontal) container was created to accommodate the
@@ -307,6 +318,90 @@ include the following line in your config file:
 ---------------------
 # i3 config file (v4)
 ---------------------
+
+[[include]]
+=== Include directive
+
+Since i3 v4.20, it is possible to include other configuration files from your i3
+configuration.
+
+*Syntax*:
+-----------------
+include <pattern>
+-----------------
+
+i3 expands `pattern` using shell-like word expansion, specifically using the
+https://manpages.debian.org/wordexp.3[`wordexp(3)` C standard library function].
+
+*Examples*:
+--------------------------------------------------------------------------------
+# Tilde expands to the user’s home directory:
+include ~/.config/i3/assignments.conf
+
+# Environment variables are expanded:
+include $HOME/.config/i3/assignments.conf
+
+# Wildcards are expanded:
+include ~/.config/i3/config.d/*.conf
+
+# Command substitution:
+include ~/.config/i3/`hostname`.conf
+
+# i3 loads each path only once, so including the i3 config will not result
+# in an endless loop, but in an error:
+include ~/.config/i3/config
+
+# i3 changes the working directory while parsing a config file
+# so that relative paths are interpreted relative to the directory
+# of the config file that contains the path:
+include assignments.conf
+--------------------------------------------------------------------------------
+
+If a specified file cannot be read, for example because of a lack of file
+permissions, or because of a dangling symlink, i3 will report an error and
+continue processing your remaining configuration.
+
+To list all loaded configuration files, run `i3 --moreversion`:
+
+--------------------------------------------------------------------------------
+% i3 --moreversion
+Binary i3 version:  4.19.2-87-gfcae64f7+ © 2009 Michael Stapelberg and contributors
+Running i3 version: 4.19.2-87-gfcae64f7+ (pid 963940)
+Loaded i3 config:
+  /tmp/i3.cfg (main) (last modified: 2021-05-13T16:42:31 CEST, 463 seconds ago)
+  /tmp/included.cfg (included) (last modified: 2021-05-13T16:42:43 CEST, 451 seconds ago)
+  /tmp/another.cfg (included) (last modified: 2021-05-13T16:42:46 CEST, 448 seconds ago)
+--------------------------------------------------------------------------------
+
+Variables are shared between all config files, but beware of the following limitation:
+
+* You can define a variable and use it within an included file.
+* You cannot use (in the parent file) a variable that was defined within an included file.
+
+This is a technical limitation: variable expansion happens in a separate stage
+before parsing include directives.
+
+Conceptually, included files can only add to the configuration, not undo the
+effects of already-processed configuration. For example, you can only add new
+key bindings, not overwrite or remove existing key bindings. This means:
+
+* The `include` directive is suitable for organizing large configurations into
+  separate files, possibly selecting files based on conditionals.
+
+* The `include` directive is not suitable for expressing “use the default
+  configuration with the following changes”. For that case, we still recommend
+  copying and modifying the default config.
+
+[NOTE]
+====
+Implementation-wise, i3 does not currently construct one big configuration from
+all `include` directives. Instead, i3’s config file parser interprets all
+configuration directives in its `parse_file()` function. When processing an
+`include` configuration directive, the parser recursively calls `parse_file()`.
+
+This means the evaluation order of files forms a tree, or one could say i3 uses
+depth-first traversal.
+====
 
 === Comments
 
@@ -597,9 +692,10 @@ Default is +left+
 title_align left|center|right
 ---------------------------------------------
 
+[[default_border]]
 === Default border style for new windows
 
-This option determines which border style new windows will have. The default is
+This option determines which border style *new* windows will have.  The default is
 +normal+. Note that default_floating_border applies only to windows which are starting out as
 floating windows, e.g., dialog windows, but not windows that are floated later on.
 
@@ -924,7 +1020,7 @@ available outputs by running +xrandr --current+.
 If your X server supports RandR 1.5 or newer, i3 will use RandR monitor objects
 instead of output objects. Run +xrandr --listmonitors+ to see a list. Usually,
 a monitor object contains exactly one output, and has the same name as the
-output; but should that not be the case, you may specify the name of either the
+output; but should that not be the case, you can specify the name of either the
 monitor or the output in i3's configuration. For example, the Dell UP2414Q uses
 two scalers internally, so its output names might be “DP1” and “DP2”, but the
 monitor name is “Dell UP2414Q”.
@@ -1005,7 +1101,8 @@ programs to get information from i3, such as the current workspaces
 (to display a workspace bar), and to control i3.
 
 The IPC socket is enabled by default and will be created in
-+/tmp/i3-%u.XXXXXX/ipc-socket.%p+ where +%u+ is your UNIX username, +%p+ is
++$XDG_RUNTIME_DIR/i3/ipc-socket.%p+ if the directory is available, falling back
+to +/tmp/i3-%u.XXXXXX/ipc-socket.%p+, where +%u+ is your UNIX username, +%p+ is
 the PID of i3 and XXXXXX is a string of random characters from the portable
 filename character set (see mkdtemp(3)).
 
@@ -1065,7 +1162,7 @@ mouse_warping none
 === Popups during fullscreen mode
 
 When you are in fullscreen mode, some applications still open popup windows
-(take Xpdf for example). This is because these applications may not be aware
+(take Xpdf for example). This is because these applications might not be aware
 that they are in fullscreen mode (they do not check the corresponding hint).
 There are three things which are possible to do in this situation:
 
@@ -1175,9 +1272,9 @@ workspace_auto_back_and_forth yes
 === Delaying urgency hint reset on workspace change
 
 If an application on another workspace sets an urgency hint, switching to this
-workspace may lead to immediate focus of the application, which also means the
+workspace might lead to immediate focus of the application, which also means the
 window decoration color would be immediately reset to +client.focused+. This
-may make it unnecessarily hard to tell which window originally raised the
+might make it unnecessarily hard to tell which window originally raised the
 event.
 
 In order to prevent this, you can tell i3 to delay resetting the urgency state
@@ -1200,9 +1297,9 @@ force_display_urgency_hint 500 ms
 === Focus on window activation
 
 If a window is activated, e.g., via +google-chrome www.google.com+, it may request
-to take focus. Since this may not preferable, different reactions can be configured.
+to take focus. Since this might not be preferable, different reactions can be configured.
 
-Note that this may not affect windows that are being opened. To prevent new windows
+Note that this might not affect windows that are being opened. To prevent new windows
 from being focused, see <<no_focus>>.
 
 *Syntax*:
@@ -1349,9 +1446,11 @@ mode). The modifier key can be configured using the +modifier+ option.
 The mode option can be changed during runtime through the +bar mode+ command.
 On reload the mode will be reverted to its configured value.
 
-The hide mode maximizes screen space that can be used for actual windows. Also,
-i3bar sends the +SIGSTOP+ and +SIGCONT+ signals to the statusline process to
-save battery power.
+The hide mode maximizes screen space that can be used for actual windows. When
+the bar is hidden, i3bar sends the +SIGSTOP+ and +SIGCONT+ signals to the
++status_command+ process in order to conserve battery power. This feature can
+be disabled by the +status_command+ process by setting the appropriate values
+in its JSON header message.
 
 Invisible mode allows to permanently maximize screen space, as the bar is never
 shown. Thus, you can configure i3bar to not disturb you by popping up because
@@ -1408,6 +1507,11 @@ button4::
     Scroll wheel up.
 button5::
     Scroll wheel down.
+button6::
+    Scroll wheel right.
+button7::
+    Scroll wheel left.
+
 
 Please note that the old +wheel_up_cmd+ and +wheel_down_cmd+ commands are deprecated
 and will be removed in a future release. We strongly recommend using the more general
@@ -1476,9 +1580,16 @@ options for different outputs by using multiple 'bar' blocks.
 To make a particular i3bar instance handle multiple outputs, specify the output
 directive multiple times.
 
+These output names have a special meaning:
+
+primary::
+    Selects the output that is configured as primary in the X server.
+nonprimary::
+    Selects every output that is not configured as primary in the X server.
+
 *Syntax*:
 ---------------
-output primary|<output>
+output primary|nonprimary|<output>
 ---------------
 
 *Example*:
@@ -1634,7 +1745,7 @@ bar {
 
 By default, the width a workspace button is determined by the width of the text
 showing the workspace name. If the name is too short (say, one letter), then the
-workspace button may look too small.
+workspace button might look too small.
 
 This option specifies the minimum width for workspace buttons. If the name of
 a workspace is too short to cover the button, an additional padding is added on
@@ -1644,7 +1755,7 @@ The default value of zero means that no additional padding is added.
 
 The setting also applies to the current binding mode indicator.
 
-Note that the specified pixels refer to logical pixels, which may translate
+Note that the specified pixels refer to logical pixels, which might translate
 into more pixels on HiDPI displays.
 
 *Syntax*:
@@ -1674,8 +1785,8 @@ When +strip_workspace_name+ is set to +yes+, any workspace that has a name of
 the form "[n][:][NAME]" will display only the number.
 
 The default is to display the full name within the workspace button. Be aware
-that the colon in the workspace name is optional, so `[n][NAME]` will also 
-have the the workspace name and number stripped correctly. 
+that the colon in the workspace name is optional, so `[n][NAME]` will also
+have the workspace name and number stripped correctly.
 
 *Syntax*:
 ------------------------------
@@ -1870,6 +1981,10 @@ window_type::
 	Compare the window type (_NET_WM_WINDOW_TYPE). Possible values are
 	+normal+, +dialog+, +utility+, +toolbar+, +splash+, +menu+, +dropdown_menu+,
 	+popup_menu+, +tooltip+ and +notification+.
+machine::
+	Compares the name of the machine the client window is running on
+	(WM_CLIENT_MACHINE). Usually, it is equal to the hostname of the local
+	machine, but it may differ if remote X11 apps are used.
 id::
 	Compares the X11 window ID, which you can get via +xwininfo+ for example.
 title::
@@ -1894,12 +2009,22 @@ con_id::
 	to match only the currently focused window.
 floating::
 	Only matches floating windows. This criterion requires no value.
+floating_from::
+	Like +floating+ but this criterion takes two possible values: "auto"
+	and "user". With "auto", only windows that were automatically opened as
+	floating are matched. With "user", only windows that the user made
+	floating are matched.
 tiling::
 	Only matches tiling windows. This criterion requires no value.
+tiling_from::
+	Like +tiling+ but this criterion takes two possible values: "auto" and
+	"user". With "auto", only windows that were automatically opened as
+	tiling are matched. With "user", only windows that the user made tiling
+	are matched.
 
-The criteria +class+, +instance+, +role+, +title+, +workspace+ and +mark+ are
-actually regular expressions (PCRE). See +pcresyntax(3)+ or +perldoc perlre+ for
-information on how to use them.
+The criteria +class+, +instance+, +role+, +title+, +workspace+, +machine+ and
++mark+ are actually regular expressions (PCRE). See +pcresyntax(3)+ or +perldoc
+perlre+ for information on how to use them.
 
 [[exec]]
 === Executing applications (exec)
@@ -1985,6 +2110,7 @@ bindsym $mod+h split horizontal
 bindsym $mod+t split toggle
 -------------------------------
 
+[[manipulating_layout]]
 === Manipulating layout
 
 Use +layout toggle split+, +layout stacking+, +layout tabbed+, +layout splitv+
@@ -2121,12 +2247,15 @@ Use the +move+ command to move a container.
 # Moves the container into the given direction.
 # The optional pixel argument specifies how far the
 # container should be moved if it is floating and
-# defaults to 10 pixels.
-move <left|right|down|up> [<px> px]
+# defaults to 10 pixels. The optional ppt argument
+# means "percentage points", and if specified it indicates
+# how many points the container should be moved if it is
+# floating rather than by a pixel value.
+move <left|right|down|up> [<amount> [px|ppt]]
 
 # Moves the container to the specified pos_x and pos_y
 # coordinates on the screen.
-move position <pos_x> [px] <pos_y> [px]
+move position <pos_x> [px|ppt] <pos_y> [px|ppt]
 
 # Moves the container to the center of the screen.
 # If 'absolute' is used, it is moved to the center of
@@ -2235,9 +2364,8 @@ exhausting numbered ones and looks for numbered ones after exhausting named ones
 See <<move_to_outputs>> for how to move a container/workspace to a different
 RandR output.
 
-Workspace names are parsed as
-https://developer.gnome.org/pango/stable/pango-Markup.html[Pango markup]
-by i3bar.
+Workspace names are parsed as https://developer.gnome.org/pango/1.46/[Pango
+markup] by i3bar.
 
 [[back_and_forth]]
 To switch back to the previously focused workspace, use +workspace
@@ -2362,15 +2490,18 @@ To move a container to another RandR output (addressed by names like +LVDS1+ or
 
 *Syntax*:
 ------------------------------------------------------------
-move container to output left|right|down|up|current|primary|<output>
-move workspace to output left|right|down|up|current|primary|<output>
-------------------------------------------------------------
+move container to output left|right|down|up|current|primary|next|<output1> [output2]…
+move workspace to output left|right|down|up|current|primary|next|<output1> [output2]…
+-------------------------------------------------------------------------------------
 
 *Examples*:
 --------------------------------------------------------
 # Move the current workspace to the next output
 # (effectively toggles when you only have two outputs)
-bindsym $mod+x move workspace to output right
+bindsym $mod+x move workspace to output next
+
+# Cycle this workspace between outputs VGA1 and LVDS1 but not DVI0
+bindsym $mod+x move workspace to output VGA1 LVDS1
 
 # Put this window on the presentation output.
 bindsym $mod+x move container to output VGA1
@@ -2378,6 +2509,11 @@ bindsym $mod+x move container to output VGA1
 # Put this window on the primary output.
 bindsym $mod+x move container to output primary
 --------------------------------------------------------
+
+If you specify more than one output, the container/workspace is cycled through
+them: If it is already in one of the outputs of the list, it will move to the
+next output in the list. If it is in an output not in the list, it will move to
+the first specified output. Non-existing outputs are skipped.
 
 Note that you might not have a primary output configured yet. To do so, run:
 -------------------------
@@ -2442,7 +2578,7 @@ for_window [class="urxvt"] resize set 640 480
 === Jumping to specific windows
 
 Often when in a multi-monitor environment, you want to quickly jump to a
-specific window. For example, while working on workspace 3 you may want to
+specific window. For example, while working on workspace 3 you might want to
 jump to your mail client to email your boss that you’ve achieved some
 important goal. Instead of figuring out how to navigate to your mail client,
 it would be more convenient to have a shortcut. You can use the +focus+ command
@@ -2477,7 +2613,7 @@ for this purpose: It lets you input a command and sends the command to i3. It
 can also prefix this command and display a custom prompt for the input dialog.
 
 The additional +--toggle+ option will remove the mark if the window already has
-this mark or add it otherwise. Note that you may need to use this in
+this mark or add it otherwise. Note that you might need to use this in
 combination with +--add+ (see below) as any other marks will otherwise be
 removed.
 
@@ -2529,9 +2665,8 @@ unmark irssi
 
 By default, i3 will simply print the X11 window title. Using +title_format+,
 this can be customized by setting the format to the desired output. This
-directive supports
-https://developer.gnome.org/pango/stable/pango-Markup.html[Pango markup]
-and the following placeholders which will be replaced:
+directive supports https://developer.gnome.org/pango/1.46/[Pango markup] and the
+following placeholders which will be replaced:
 
 +%title+::
     For normal windows, this is the X11 window title (_NET_WM_NAME or WM_NAME
@@ -2544,6 +2679,9 @@ and the following placeholders which will be replaced:
 +%instance+::
     The X11 window instance (first part of WM_CLASS). This corresponds to the
     +instance+ criterion, see <<command_criteria>>.
++%machine+::
+    The X11 name of the machine (WM_CLIENT_MACHINE). This corresponds to the
+    +machine+ criterion, see <<command_criteria>>.
 
 Using the <<for_window>> directive, you can set the title format for any window
 based on <<command_criteria>>.
@@ -2565,6 +2703,32 @@ for_window [class=".*"] title_format "<b>%title</b>"
 for_window [class="(?i)firefox"] title_format "<span foreground='red'>%title</span>"
 -------------------------------------------------------------------------------------
 
+[[title_window_icon]]
+=== Window title icon
+
+By default, i3 does not display the window icon in the title bar.
+
+Starting with i3 v4.20, you can optionally enable window icons either for
+specific windows or for all windows (using the <<for_window>> directive).
+
+*Syntax*:
+-----------------------------
+title_window_icon <yes|no>
+title_window_icon padding <px>
+------------------------------
+
+*Examples*:
+-------------------------------------------------------------------------------------
+# show the window icon for the focused window to make it stand out
+bindsym $mod+p title_window_icon on
+
+# enable window icons for all windows
+for_window [class=".*"] title_window_icon on
+
+# enable window icons for all windows with extra horizontal padding
+for_window [class=".*"] title_window_icon padding 3px
+-------------------------------------------------------------------------------------
+
 === Changing border style
 
 To change the border of the current client, you can use +border normal+ to use the normal
@@ -2576,7 +2740,7 @@ optional pixel argument can be used to specify the border width when switching
 to the normal and pixel styles.
 
 Note that "pixel" refers to logical pixel. On HiDPI displays, a logical pixel
-may be represented by multiple physical pixels, so +pixel 1+ might not
+is represented by multiple physical pixels, so +pixel 1+ might not
 necessarily translate into a single pixel row wide border.
 
 *Syntax*:
@@ -2594,9 +2758,15 @@ border 1pixel
 bindsym $mod+t border normal 0
 # use no window title and a thick border
 bindsym $mod+y border pixel 3
+# use window title *and* a thick border
+bindsym $mod+y border normal 3
 # use neither window title nor border
 bindsym $mod+u border none
+# no border on VLC
+for_window [class="vlc"] border none
 ----------------------------------------------
+
+To change the default for all windows, see the directive <<default_border>>.
 
 [[shmlog]]
 === Enabling shared memory logging
@@ -2839,7 +3009,7 @@ See also <<presentations>> for more examples of multi-monitor setups.
 
 === Interesting configuration for multi-monitor environments
 
-There are several things to configure in i3 which may be interesting if you
+There are several things to configure in i3 which might be interesting if you
 have more than one monitor:
 
 1. You can specify which workspace should be put on which screen. This

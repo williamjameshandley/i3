@@ -10,28 +10,26 @@
 #include "common.h"
 #include "yajl_utils.h"
 
-#include <stdlib.h>
-#include <unistd.h>
-#include <sys/types.h>
-#include <sys/wait.h>
-#include <signal.h>
-#include <stdio.h>
-#include <stdarg.h>
-#include <fcntl.h>
-#include <string.h>
-#include <errno.h>
 #include <err.h>
+#include <errno.h>
 #include <ev.h>
-#include <yajl/yajl_common.h>
-#include <yajl/yajl_parse.h>
-#include <yajl/yajl_version.h>
-#include <yajl/yajl_gen.h>
+#include <fcntl.h>
 #include <paths.h>
+#include <signal.h>
+#include <stdarg.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
-#include <xcb/xcb_keysyms.h>
+#include <yajl/yajl_gen.h>
+#include <yajl/yajl_parse.h>
 
 /* Global variables for child_*() */
-i3bar_child child;
+i3bar_child child = {0};
+#define DLOG_CHILD DLOG("%s: pid=%ld stopped=%d stop_signal=%d cont_signal=%d click_events=%d click_events_init=%d\n", \
+                        __func__, (long)child.pid, child.stopped, child.stop_signal, child.cont_signal, child.click_events, child.click_events_init)
 
 /* stdin- and SIGCHLD-watchers */
 ev_io *stdin_io;
@@ -68,7 +66,7 @@ int child_stdin;
  * Remove all blocks from the given statusline.
  * If free_resources is set, the fields of each status block will be free'd.
  */
-static void clear_statusline(struct statusline_head *head, bool free_resources) {
+void clear_statusline(struct statusline_head *head, bool free_resources) {
     struct status_block *first;
     while (!TAILQ_EMPTY(head)) {
         first = TAILQ_FIRST(head);
@@ -90,7 +88,7 @@ static void clear_statusline(struct statusline_head *head, bool free_resources) 
 
 static void copy_statusline(struct statusline_head *from, struct statusline_head *to) {
     struct status_block *current;
-    TAILQ_FOREACH(current, from, blocks) {
+    TAILQ_FOREACH (current, from, blocks) {
         struct status_block *new_block = smalloc(sizeof(struct status_block));
         memcpy(new_block, current, sizeof(struct status_block));
         TAILQ_INSERT_TAIL(to, new_block, blocks);
@@ -141,6 +139,10 @@ static void cleanup(void) {
     if (stdin_io != NULL) {
         ev_io_stop(main_loop, stdin_io);
         FREE(stdin_io);
+        close(stdin_fd);
+        stdin_fd = 0;
+        close(child_stdin);
+        child_stdin = 0;
     }
 
     if (child_sig != NULL) {
@@ -194,6 +196,11 @@ static int stdin_map_key(void *context, const unsigned char *key, size_t len) {
 
 static int stdin_boolean(void *context, int val) {
     parser_ctx *ctx = context;
+
+    if (!ctx->last_map_key) {
+        return 0;
+    }
+
     if (strcasecmp(ctx->last_map_key, "urgent") == 0) {
         ctx->block.urgent = val;
         return 1;
@@ -208,6 +215,11 @@ static int stdin_boolean(void *context, int val) {
 
 static int stdin_string(void *context, const unsigned char *val, size_t len) {
     parser_ctx *ctx = context;
+
+    if (!ctx->last_map_key) {
+        return 0;
+    }
+
     if (strcasecmp(ctx->last_map_key, "full_text") == 0) {
         ctx->block.full_text = i3string_from_markup_with_length((const char *)val, len);
         return 1;
@@ -260,6 +272,11 @@ static int stdin_string(void *context, const unsigned char *val, size_t len) {
 
 static int stdin_integer(void *context, long long val) {
     parser_ctx *ctx = context;
+
+    if (!ctx->last_map_key) {
+        return 0;
+    }
+
     if (strcasecmp(ctx->last_map_key, "min_width") == 0) {
         ctx->block.min_width = (uint32_t)val;
         return 1;
@@ -330,7 +347,7 @@ static int stdin_end_array(void *context) {
 
     DLOG("dumping statusline:\n");
     struct status_block *current;
-    TAILQ_FOREACH(current, &statusline_head, blocks) {
+    TAILQ_FOREACH (current, &statusline_head, blocks) {
         DLOG("full_text = %s\n", i3string_as_utf8(current->full_text));
         DLOG("short_text = %s\n", (current->short_text == NULL ? NULL : i3string_as_utf8(current->short_text)));
         DLOG("color = %s\n", current->color);
@@ -528,7 +545,7 @@ static void child_write_output(void) {
 
 /*
  * Start a child process with the specified command and reroute stdin.
- * We actually start a $SHELL to execute the command so we don't have to care
+ * We actually start a shell to execute the command so we don't have to care
  * about arguments and such.
  *
  * If `command' is NULL, such as in the case when no `status_command' is given
@@ -604,9 +621,12 @@ void start_child(char *command) {
     ev_child_start(main_loop, child_sig);
 
     atexit(kill_child_at_exit);
+    DLOG_CHILD;
 }
 
 static void child_click_events_initialize(void) {
+    DLOG_CHILD;
+
     if (!child.click_events_init) {
         yajl_gen_array_open(gen);
         child_write_output();
@@ -618,7 +638,7 @@ static void child_click_events_initialize(void) {
  * Generates a click event, if enabled.
  *
  */
-void send_block_clicked(int button, const char *name, const char *instance, int x, int y, int x_rel, int y_rel, int width, int height, int mods) {
+void send_block_clicked(int button, const char *name, const char *instance, int x, int y, int x_rel, int y_rel, int out_x, int out_y, int width, int height, int mods) {
     if (!child.click_events) {
         return;
     }
@@ -670,6 +690,12 @@ void send_block_clicked(int button, const char *name, const char *instance, int 
     ystr("relative_y");
     yajl_gen_integer(gen, y_rel);
 
+    ystr("output_x");
+    yajl_gen_integer(gen, out_x);
+
+    ystr("output_y");
+    yajl_gen_integer(gen, out_y);
+
     ystr("width");
     yajl_gen_integer(gen, width);
 
@@ -685,6 +711,8 @@ void send_block_clicked(int button, const char *name, const char *instance, int 
  *
  */
 void kill_child_at_exit(void) {
+    DLOG_CHILD;
+
     if (child.pid > 0) {
         if (child.cont_signal > 0 && child.stopped)
             killpg(child.pid, child.cont_signal);
@@ -698,6 +726,8 @@ void kill_child_at_exit(void) {
  *
  */
 void kill_child(void) {
+    DLOG_CHILD;
+
     if (child.pid > 0) {
         if (child.cont_signal > 0 && child.stopped)
             killpg(child.pid, child.cont_signal);
@@ -713,6 +743,8 @@ void kill_child(void) {
  *
  */
 void stop_child(void) {
+    DLOG_CHILD;
+
     if (child.stop_signal > 0 && !child.stopped) {
         child.stopped = true;
         killpg(child.pid, child.stop_signal);
@@ -724,6 +756,8 @@ void stop_child(void) {
  *
  */
 void cont_child(void) {
+    DLOG_CHILD;
+
     if (child.cont_signal > 0 && child.stopped) {
         child.stopped = false;
         killpg(child.pid, child.cont_signal);

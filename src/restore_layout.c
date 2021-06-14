@@ -29,8 +29,7 @@ typedef struct placeholder_state {
     /** The drawable surface */
     surface_t surface;
 
-    TAILQ_ENTRY(placeholder_state)
-    state;
+    TAILQ_ENTRY(placeholder_state) state;
 } placeholder_state;
 
 static TAILQ_HEAD(state_head, placeholder_state) state_head =
@@ -135,12 +134,11 @@ static void update_placeholder_contents(placeholder_state *state) {
     draw_util_clear_surface(&(state->surface), background);
 
     // TODO: make i3font functions per-connection, at least these two for now…?
-    xcb_flush(restore_conn);
     xcb_aux_sync(restore_conn);
 
     Match *swallows;
     int n = 0;
-    TAILQ_FOREACH(swallows, &(state->con->swallow_head), matches) {
+    TAILQ_FOREACH (swallows, &(state->con->swallow_head), matches) {
         char *serialized = NULL;
 
 #define APPEND_REGEX(re_name)                                                                                                                        \
@@ -154,6 +152,7 @@ static void update_placeholder_contents(placeholder_state *state) {
         APPEND_REGEX(instance);
         APPEND_REGEX(window_role);
         APPEND_REGEX(title);
+        APPEND_REGEX(machine);
 
         if (serialized == NULL) {
             DLOG("This swallows specification is not serializable?!\n");
@@ -180,7 +179,6 @@ static void update_placeholder_contents(placeholder_state *state) {
     int y = (state->rect.height / 2) - (config.font.height / 2);
     draw_util_text(line, &(state->surface), foreground, background, x, y, text_width);
     i3string_free(line);
-    xcb_flush(restore_conn);
     xcb_aux_sync(restore_conn);
 }
 
@@ -234,10 +232,10 @@ static void open_placeholder_window(Con *con) {
     }
 
     Con *child;
-    TAILQ_FOREACH(child, &(con->nodes_head), nodes) {
+    TAILQ_FOREACH (child, &(con->nodes_head), nodes) {
         open_placeholder_window(child);
     }
-    TAILQ_FOREACH(child, &(con->floating_head), floating_windows) {
+    TAILQ_FOREACH (child, &(con->floating_head), floating_windows) {
         open_placeholder_window(child);
     }
 }
@@ -251,10 +249,10 @@ static void open_placeholder_window(Con *con) {
  */
 void restore_open_placeholder_windows(Con *parent) {
     Con *child;
-    TAILQ_FOREACH(child, &(parent->nodes_head), nodes) {
+    TAILQ_FOREACH (child, &(parent->nodes_head), nodes) {
         open_placeholder_window(child);
     }
-    TAILQ_FOREACH(child, &(parent->floating_head), floating_windows) {
+    TAILQ_FOREACH (child, &(parent->floating_head), floating_windows) {
         open_placeholder_window(child);
     }
 
@@ -270,7 +268,7 @@ void restore_open_placeholder_windows(Con *parent) {
  */
 bool restore_kill_placeholder(xcb_window_t placeholder) {
     placeholder_state *state;
-    TAILQ_FOREACH(state, &state_head, state) {
+    TAILQ_FOREACH (state, &state_head, state) {
         if (state->window != placeholder)
             continue;
 
@@ -288,7 +286,7 @@ bool restore_kill_placeholder(xcb_window_t placeholder) {
 
 static void expose_event(xcb_expose_event_t *event) {
     placeholder_state *state;
-    TAILQ_FOREACH(state, &state_head, state) {
+    TAILQ_FOREACH (state, &state_head, state) {
         if (state->window != event->window)
             continue;
 
@@ -310,7 +308,7 @@ static void expose_event(xcb_expose_event_t *event) {
  */
 static void configure_notify(xcb_configure_notify_event_t *event) {
     placeholder_state *state;
-    TAILQ_FOREACH(state, &state_head, state) {
+    TAILQ_FOREACH (state, &state_head, state) {
         if (state->window != event->window)
             continue;
 

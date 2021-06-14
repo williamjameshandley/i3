@@ -8,24 +8,33 @@
  *
  */
 #include "all.h"
+#include "shmlog.h"
 
 #include <ev.h>
 #include <fcntl.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <sys/un.h>
-#include <sys/time.h>
-#include <sys/resource.h>
-#include <sys/mman.h>
-#include <sys/stat.h>
+#include <getopt.h>
 #include <libgen.h>
-#include "shmlog.h"
+#include <locale.h>
+#include <signal.h>
+#include <sys/mman.h>
+#include <sys/resource.h>
+#include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/time.h>
+#include <sys/types.h>
+#include <sys/un.h>
+#include <unistd.h>
+#include <xcb/xinerama.h>
+#include <xcb/bigreq.h>
 
 #ifdef I3_ASAN_ENABLED
 #include <sanitizer/lsan_interface.h>
 #endif
 
 #include "sd-daemon.h"
+
+#include "i3-atoms_NET_SUPPORTED.xmacro.h"
+#include "i3-atoms_rest.xmacro.h"
 
 /* The original value of RLIMIT_CORE when i3 was started. We need to restore
  * this before starting any other process, since we set RLIMIT_CORE to
@@ -74,6 +83,7 @@ const int default_shmlog_size = 25 * 1024 * 1024;
 
 /* The list of key bindings */
 struct bindings_head *bindings;
+const char *current_binding_mode = NULL;
 
 /* The list of exec-lines */
 struct autostarts_head autostarts = TAILQ_HEAD_INITIALIZER(autostarts);
@@ -89,11 +99,16 @@ struct assignments_head assignments = TAILQ_HEAD_INITIALIZER(assignments);
 struct ws_assignments_head ws_assignments = TAILQ_HEAD_INITIALIZER(ws_assignments);
 
 /* We hope that those are supported and set them to true */
-bool xcursor_supported = true;
 bool xkb_supported = true;
 bool shape_supported = true;
 
 bool force_xinerama = false;
+
+/* Define all atoms as global variables */
+#define xmacro(atom) xcb_atom_t A_##atom;
+I3_NET_SUPPORTED_ATOMS_XMACRO
+I3_REST_ATOMS_XMACRO
+#undef xmacro
 
 /*
  * This callback is only a dummy, see xcb_prepare_cb.
@@ -170,7 +185,14 @@ static void i3_exit(void) {
     }
     ipc_shutdown(SHUTDOWN_REASON_EXIT, -1);
     unlink(config.ipc_socket_path);
+    if (current_log_stream_socket_path != NULL) {
+        unlink(current_log_stream_socket_path);
+    }
     xcb_disconnect(conn);
+
+    /* If a nagbar is active, kill it */
+    kill_nagbar(config_error_nagbar_pid, false);
+    kill_nagbar(command_error_nagbar_pid, false);
 
 /* We need ev >= 4 for the following code. Since it is not *that* important (it
  * only makes sure that there are no i3-nagbar instances left behind) we still
@@ -370,6 +392,11 @@ int main(int argc, char *argv[]) {
                     char *socket_path = root_atom_contents("I3_SOCKET_PATH", NULL, 0);
                     if (socket_path) {
                         printf("%s\n", socket_path);
+                        /* With -O2 (i.e. the buildtype=debugoptimized meson
+                         * option, which we set by default), gcc 9.2.1 optimizes
+                         * away socket_path at this point, resulting in a Leak
+                         * Sanitizer report. An explicit free helps: */
+                        free(socket_path);
                         exit(EXIT_SUCCESS);
                     }
 
@@ -431,12 +458,12 @@ int main(int argc, char *argv[]) {
                                 "\ti3 floating toggle\n"
                                 "\ti3 kill window\n"
                                 "\n");
-                exit(EXIT_FAILURE);
+                exit(opt == 'h' ? EXIT_SUCCESS : EXIT_FAILURE);
         }
     }
 
     if (only_check_config) {
-        exit(load_configuration(override_configpath, C_VALIDATE) ? 0 : 1);
+        exit(load_configuration(override_configpath, C_VALIDATE) ? EXIT_SUCCESS : EXIT_FAILURE);
     }
 
     /* If the user passes more arguments, we act like i3-msg would: Just send
@@ -551,10 +578,22 @@ int main(int argc, char *argv[]) {
     root = root_screen->root;
     previous_screen = UINT8_MAX;
 
+    /* Prefetch X11 extensions that we are interested in. */
+    xcb_prefetch_extension_data(conn, &xcb_xkb_id);
+    xcb_prefetch_extension_data(conn, &xcb_shape_id);
+    /* BIG-REQUESTS is used by libxcb internally. */
+    xcb_prefetch_extension_data(conn, &xcb_big_requests_id);
+    if (force_xinerama) {
+        xcb_prefetch_extension_data(conn, &xcb_xinerama_id);
+    } else {
+        xcb_prefetch_extension_data(conn, &xcb_randr_id);
+    }
+
     /* Place requests for the atoms we need as soon as possible */
 #define xmacro(atom) \
     xcb_intern_atom_cookie_t atom##_cookie = xcb_intern_atom(conn, 0, strlen(#atom), #atom);
-#include "atoms.xmacro"
+    I3_NET_SUPPORTED_ATOMS_XMACRO
+    I3_REST_ATOMS_XMACRO
 #undef xmacro
 
     root_depth = root_screen->root_depth;
@@ -579,6 +618,8 @@ int main(int argc, char *argv[]) {
         visual_type = get_visualtype(root_screen);
     }
 
+    xcb_prefetch_maximum_request_length(conn);
+
     init_dpi();
 
     DLOG("root_depth = %d, visual_id = 0x%08x.\n", root_depth, visual_type->visual_id);
@@ -600,7 +641,8 @@ int main(int argc, char *argv[]) {
         A_##name = reply->atom;                                                            \
         free(reply);                                                                       \
     } while (0);
-#include "atoms.xmacro"
+    I3_NET_SUPPORTED_ATOMS_XMACRO
+    I3_REST_ATOMS_XMACRO
 #undef xmacro
 
     load_configuration(override_configpath, C_LOAD);
@@ -639,15 +681,9 @@ int main(int argc, char *argv[]) {
 
     /* Set a cursor for the root window (otherwise the root window will show no
        cursor until the first client is launched). */
-    if (xcursor_supported)
-        xcursor_set_root_cursor(XCURSOR_CURSOR_POINTER);
-    else
-        xcb_set_root_cursor(XCURSOR_CURSOR_POINTER);
+    xcursor_set_root_cursor(XCURSOR_CURSOR_POINTER);
 
     const xcb_query_extension_reply_t *extreply;
-    xcb_prefetch_extension_data(conn, &xcb_xkb_id);
-    xcb_prefetch_extension_data(conn, &xcb_shape_id);
-
     extreply = xcb_get_extension_data(conn, &xcb_xkb_id);
     xkb_supported = extreply->present;
     if (!extreply->present) {
@@ -783,9 +819,9 @@ int main(int argc, char *argv[]) {
      * and restarting i3. See #2326. */
     if (layout_path != NULL && randr_base > -1) {
         Con *con;
-        TAILQ_FOREACH(con, &(croot->nodes_head), nodes) {
+        TAILQ_FOREACH (con, &(croot->nodes_head), nodes) {
             Output *output;
-            TAILQ_FOREACH(output, &outputs, outputs) {
+            TAILQ_FOREACH (output, &outputs, outputs) {
                 if (output->active || strcmp(con->name, output_primary_name(output)) != 0)
                     continue;
 
@@ -827,13 +863,25 @@ int main(int argc, char *argv[]) {
     tree_render();
 
     /* Create the UNIX domain socket for IPC */
-    int ipc_socket = ipc_create_socket(config.ipc_socket_path);
+    int ipc_socket = create_socket(config.ipc_socket_path, &current_socketpath);
     if (ipc_socket == -1) {
         ELOG("Could not create the IPC socket, IPC disabled\n");
     } else {
         struct ev_io *ipc_io = scalloc(1, sizeof(struct ev_io));
         ev_io_init(ipc_io, ipc_new_client, ipc_socket, EV_READ);
         ev_io_start(main_loop, ipc_io);
+    }
+
+    /* Chose a file name in /tmp/ based on the PID */
+    char *log_stream_socket_path = get_process_filename("log-stream-socket");
+    int log_socket = create_socket(log_stream_socket_path, &current_log_stream_socket_path);
+    free(log_stream_socket_path);
+    if (log_socket == -1) {
+        ELOG("Could not create the log socket, i3-dump-log -f will not work\n");
+    } else {
+        struct ev_io *log_io = scalloc(1, sizeof(struct ev_io));
+        ev_io_init(log_io, log_new_client, log_socket, EV_READ);
+        ev_io_start(main_loop, log_io);
     }
 
     /* Also handle the UNIX domain sockets passed via socket activation. The
@@ -932,24 +980,23 @@ int main(int argc, char *argv[]) {
     xcb_ungrab_server(conn);
 
     if (autostart) {
-        LOG("This is not an in-place restart, copying root window contents to a pixmap\n");
+        /* When the root's window background is set to NONE, that might mean
+         * that old content stays visible when a window is closed. That has
+         * unpleasant effect of "my terminal (does not seem to) close!".
+         *
+         * There does not seem to be an easy way to query for this problem, so
+         * we test for it: Open & close a window and check if the background is
+         * redrawn or the window contents stay visible.
+         */
+        LOG("This is not an in-place restart, checking if a wallpaper is set.\n");
+
         xcb_screen_t *root = xcb_aux_get_screen(conn, conn_screen);
-        uint16_t width = root->width_in_pixels;
-        uint16_t height = root->height_in_pixels;
-        xcb_pixmap_t pixmap = xcb_generate_id(conn);
-        xcb_gcontext_t gc = xcb_generate_id(conn);
-
-        xcb_create_pixmap(conn, root->root_depth, pixmap, root->root, width, height);
-
-        xcb_create_gc(conn, gc, root->root,
-                      XCB_GC_FUNCTION | XCB_GC_PLANE_MASK | XCB_GC_FILL_STYLE | XCB_GC_SUBWINDOW_MODE,
-                      (uint32_t[]){XCB_GX_COPY, ~0, XCB_FILL_STYLE_SOLID, XCB_SUBWINDOW_MODE_INCLUDE_INFERIORS});
-
-        xcb_copy_area(conn, root->root, pixmap, gc, 0, 0, 0, 0, width, height);
-        xcb_change_window_attributes(conn, root->root, XCB_CW_BACK_PIXMAP, (uint32_t[]){pixmap});
-        xcb_flush(conn);
-        xcb_free_gc(conn, gc);
-        xcb_free_pixmap(conn, pixmap);
+        if (is_background_set(conn, root)) {
+            LOG("A wallpaper is set, so no screenshot is necessary.\n");
+        } else {
+            LOG("No wallpaper set, copying root window contents to a pixmap\n");
+            set_screenshot_as_wallpaper(conn, root);
+        }
     }
 
 #if defined(__OpenBSD__)
@@ -1008,10 +1055,10 @@ int main(int argc, char *argv[]) {
 
     /* Start i3bar processes for all configured bars */
     Barconfig *barconfig;
-    TAILQ_FOREACH(barconfig, &barconfigs, configs) {
+    TAILQ_FOREACH (barconfig, &barconfigs, configs) {
         char *command = NULL;
         sasprintf(&command, "%s %s --bar_id=%s --socket=\"%s\"",
-                  barconfig->i3bar_command ? barconfig->i3bar_command : "i3bar",
+                  barconfig->i3bar_command ? barconfig->i3bar_command : "exec i3bar",
                   barconfig->verbose ? "-V" : "",
                   barconfig->id, current_socketpath);
         LOG("Starting bar process: %s\n", command);

@@ -29,23 +29,18 @@ typedef struct binding_t {
     char *command;
     bool release;
 
-    TAILQ_ENTRY(binding_t)
-    bindings;
+    TAILQ_ENTRY(binding_t) bindings;
 } binding_t;
 
 typedef struct tray_output_t {
     char *output;
 
-    TAILQ_ENTRY(tray_output_t)
-    tray_outputs;
+    TAILQ_ENTRY(tray_output_t) tray_outputs;
 } tray_output_t;
 
 typedef struct config_t {
     uint32_t modifier;
-
-    TAILQ_HEAD(bindings_head, binding_t)
-    bindings;
-
+    TAILQ_HEAD(bindings_head, binding_t) bindings;
     position_t position;
     bool verbose;
     bool transparency;
@@ -59,10 +54,7 @@ typedef struct config_t {
     char *command;
     char *fontname;
     i3String *separator_symbol;
-
-    TAILQ_HEAD(tray_outputs_head, tray_output_t)
-    tray_outputs;
-
+    TAILQ_HEAD(tray_outputs_head, tray_output_t) tray_outputs;
     int tray_padding;
     int num_outputs;
     char **outputs;
@@ -74,13 +66,20 @@ typedef struct config_t {
            S_SHOW = 1 } hidden_state;
 } config_t;
 
-config_t config;
+extern config_t config;
 
 /**
  * Start parsing the received bar configuration JSON string
  *
  */
 void parse_config_json(char *json);
+
+/**
+ * Start parsing the received bar configuration list. The only usecase right
+ * now is to automatically get the first bar id.
+ *
+ */
+void parse_get_first_i3bar_config(char *json);
 
 /**
  * free()s the color strings as soon as they are not needed anymore.
