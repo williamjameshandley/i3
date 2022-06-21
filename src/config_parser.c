@@ -165,8 +165,6 @@ static void clear_stack(struct stack *ctx) {
 static void next_state(const cmdp_token *token, struct parser_ctx *ctx) {
     cmdp_state _next_state = token->next_state;
 
-    //printf("token = name %s identifier %s\n", token->name, token->identifier);
-    //printf("next_state = %d\n", token->next_state);
     if (token->next_state == __CALL) {
         struct ConfigResultIR subcommand_output = {
             .ctx = ctx,
@@ -254,7 +252,6 @@ static void parse_config(struct parser_ctx *ctx, const char *input, struct conte
     bool token_handled;
     linecnt = 1;
 
-// TODO: make this testable
 #ifndef TEST_PARSER
     struct ConfigResultIR subcommand_output = {
         .ctx = ctx,
@@ -269,8 +266,6 @@ static void parse_config(struct parser_ctx *ctx, const char *input, struct conte
          * separate configuration directives. */
         while ((*walk == ' ' || *walk == '\t') && *walk != '\0')
             walk++;
-
-        //printf("remaining input: %s\n", walk);
 
         cmdp_token_ptr *ptr = &(tokens[ctx->state]);
         token_handled = false;
@@ -378,7 +373,6 @@ static void parse_config(struct parser_ctx *ctx, const char *input, struct conte
             }
 
             if (strcmp(token->name, "end") == 0) {
-                //printf("checking for end: *%s*\n", walk);
                 if (*walk == '\0' || *walk == '\n' || *walk == '\r') {
                     next_state(token, ctx);
                     token_handled = true;
@@ -386,7 +380,6 @@ static void parse_config(struct parser_ctx *ctx, const char *input, struct conte
                      * datastructure for commands which do *not* specify any
                      * criteria, we re-initialize the criteria system after
                      * every command. */
-// TODO: make this testable
 #ifndef TEST_PARSER
                     cfg_criteria_init(&(ctx->current_match), &subcommand_output, INITIAL);
 #endif
@@ -445,7 +438,7 @@ static void parse_config(struct parser_ctx *ctx, const char *input, struct conte
             const char *error_line = start_of_line(walk, input);
 
             /* Contains the same amount of characters as 'input' has, but with
-             * the unparseable part highlighted using ^ characters. */
+             * the unparsable part highlighted using ^ characters. */
             char *position = scalloc(strlen(error_line) + 1, 1);
             const char *copywalk;
             for (copywalk = error_line;
@@ -857,14 +850,14 @@ void free_variables(struct parser_ctx *ctx) {
  * parse_config and possibly launching i3-nagbar.
  *
  */
-parse_file_result_t parse_file(struct parser_ctx *ctx, const char *f) {
+parse_file_result_t parse_file(struct parser_ctx *ctx, const char *f, IncludedFile *included_file) {
     int fd;
     struct stat stbuf;
     char *buf;
     FILE *fstr;
     char buffer[4096], key[512], value[4096], *continuation = NULL;
 
-    char *old_dir = get_current_dir_name();
+    char *old_dir = getcwd(NULL, 0);
     char *dir = NULL;
     /* dirname(3) might modify the buffer, so make a copy: */
     char *dirbuf = sstrdup(f);
@@ -891,13 +884,11 @@ parse_file_result_t parse_file(struct parser_ctx *ctx, const char *f) {
         return PARSE_FILE_FAILED;
     }
 
-    if (current_config == NULL) {
-        current_config = scalloc(stbuf.st_size + 1, 1);
-        if ((ssize_t)fread(current_config, 1, stbuf.st_size, fstr) != stbuf.st_size) {
-            return PARSE_FILE_FAILED;
-        }
-        rewind(fstr);
+    included_file->raw_contents = scalloc(stbuf.st_size + 1, 1);
+    if ((ssize_t)fread(included_file->raw_contents, 1, stbuf.st_size, fstr) != stbuf.st_size) {
+        return PARSE_FILE_FAILED;
     }
+    rewind(fstr);
 
     bool invalid_sets = false;
 
@@ -1083,6 +1074,8 @@ parse_file_result_t parse_file(struct parser_ctx *ctx, const char *f) {
             LOG("\n");
         }
     }
+
+    included_file->variable_replaced_contents = sstrdup(new);
 
     struct context *context = scalloc(1, sizeof(struct context));
     context->filename = f;

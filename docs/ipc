@@ -423,9 +423,9 @@ window_properties (map)::
 	following list: *title*, *instance*, *class*, *window_role*, *machine*
 	and *transient_for*.
 window_type (string)::
-	The window type (_NET_WM_WINDOW_TYPE). Possible values are undefined, normal,
-	dialog, utility, toolbar, splash, menu, dropdown_menu, popup_menu, tooltip and
-	notification.
+	The window type (_NET_WM_WINDOW_TYPE). Possible values are `undefined`,
+	unknown, normal, dialog, utility, toolbar, splash, menu, dropdown_menu,
+	popup_menu, tooltip and notification.
 urgent (bool)::
 	Whether this container (window, split container, floating container or
 	workspace) has the urgency hint set, directly or indirectly. All parent
@@ -450,12 +450,15 @@ fullscreen_mode (integer)::
 floating (string)::
 	Floating state of container.
 	Can be either "auto_on", "auto_off", "user_on" or "user_off"
-
 nodes (array of node)::
 	The tiling (i.e. non-floating) child containers of this node.
 floating_nodes (array of node)::
 	The floating child containers of this node. Only non-empty on nodes with
 	type +workspace+.
+scratchpad_state (string)::
+	Whether the window is not in the scratchpad ("none"), freshly moved to
+	the scratchpad but not yet resized ("fresh") or moved to the scratchpad
+	and resized ("changed").
 
 Please note that in the following example, I have left out some keys/values
 which are not relevant for the type of the node. Otherwise, the example would
@@ -790,12 +793,44 @@ No payload.
 
 *Reply:*
 
-The config reply is a map which currently only contains the "config" member,
-which is a string containing the config file as loaded by i3 most recently.
+The config reply is a map which contains the following fields:
+
+config (string)::
+	The top-level config file contents that i3 has loaded most recently.
+	This field is kept for backwards compatibility. See +included_configs+
+	instead.
+included_configs (array of maps)::
+	i3 adds one entry to this array for each config file it loads, in
+	order. The first entry’s +raw_contents+ are identical to the +config+
+	field.
+
+Each +included_configs+ entry contains the following fields
+
+path (string)::
+	Absolute path name to the config file that i3 loaded.
+raw_contents (string)::
+	The raw contents of the file as i3 read them.
+variable_replaced_contents (string)::
+	The contents of the file after i3 replaced all variables. This is useful
+	for debugging variable replacement.
 
 *Example:*
 -------------------
-{ "config": "font pango:monospace 8\nbindsym Mod4+q exit\n" }
+{
+  "config": "include font.cfg\n",
+  "included_configs": [
+    {
+      "path": "/home/michael/configfiles/i3/config",
+      "raw_contents": "include font.cfg\n",
+      "variable_replaced_contents": "include font.cfg\n"
+    },
+    {
+      "path": "/home/michael/configfiles/i3/font.cfg",
+      "raw_contents": "set $font pango:monospace 8\nfont $font",
+      "variable_replaced_contents": "set pango:monospace 8 pango:monospace 8\nfont pango:monospace 8\n"
+    }
+  ],
+}
 -------------------
 
 [[_tick_reply]]

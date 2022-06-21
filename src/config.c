@@ -16,7 +16,6 @@
 #include <xkbcommon/xkbcommon.h>
 
 char *current_configpath = NULL;
-char *current_config = NULL;
 Config config;
 struct modes_head modes;
 struct barconfig_head barconfigs = TAILQ_HEAD_INITIALIZER(barconfigs);
@@ -198,6 +197,7 @@ bool load_configuration(const char *override_configpath, config_load_t load_type
     INIT_COLOR(config.client.focused_inactive, "#333333", "#5f676a", "#ffffff", "#484e50");
     INIT_COLOR(config.client.unfocused, "#333333", "#222222", "#888888", "#292d2e");
     INIT_COLOR(config.client.urgent, "#2f343a", "#900000", "#ffffff", "#900000");
+    config.client.got_focused_tab_title = false;
 
     /* border and indicator color are ignored for placeholder contents */
     INIT_COLOR(config.client.placeholder, "#000000", "#0c0c0c", "#ffffff", "#000000");
@@ -234,6 +234,8 @@ bool load_configuration(const char *override_configpath, config_load_t load_type
     while (!TAILQ_EMPTY(&included_files)) {
         file = TAILQ_FIRST(&included_files);
         FREE(file->path);
+        FREE(file->raw_contents);
+        FREE(file->variable_replaced_contents);
         TAILQ_REMOVE(&included_files, file, files);
         FREE(file);
     }
@@ -256,8 +258,7 @@ bool load_configuration(const char *override_configpath, config_load_t load_type
         .stack = &stack,
     };
     SLIST_INIT(&(ctx.variables));
-    FREE(current_config);
-    const int result = parse_file(&ctx, resolved_path);
+    const int result = parse_file(&ctx, resolved_path, file);
     free_variables(&ctx);
     if (result == -1) {
         die("Could not open configuration file: %s\n", strerror(errno));
